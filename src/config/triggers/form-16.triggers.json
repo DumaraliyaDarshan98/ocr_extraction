@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Form 16",
+      "field": "tan",
+      "triggerType": "required",
+      "errorMessage": "TAN in Form-16 is required",
+      "order": 1
+    },
+    {
+      "documentType": "Form 16",
+      "field": "tan",
+      "triggerType": "regex",
+      "condition": "^[A-Z]{4}[0-9]{5}[A-Z]$",
+      "errorMessage": "Invalid TAN format",
+      "order": 2
+    },
+    {
+      "documentType": "Form 16",
+      "field": "deductorName",
+      "triggerType": "required",
+      "errorMessage": "Deductor name is required",
+      "order": 3
+    },
+    {
+      "documentType": "Form 16",
+      "field": "tan",
+      "triggerType": "custom",
+      "customKey": "tanFourthCharMatchesDeductorNameInitial",
+      "secondaryField": "deductorName",
+      "errorMessage": "TAN fourth character must match deductor name initial",
+      "order": 4
+    },
+    {
+      "documentType": "Form 16",
+      "field": "panMentionedInForm16",
+      "triggerType": "required",
+      "errorMessage": "PAN mentioned in Form-16 is required",
+      "order": 5
+    },
+    {
+      "documentType": "Form 16",
+      "field": "panMentionedInForm16",
+      "triggerType": "match",
+      "secondaryField": "pan",
+      "errorMessage": "PAN in Form-16 must match PAN in KYC",
+      "order": 6
+    }
+  ]
+}
+

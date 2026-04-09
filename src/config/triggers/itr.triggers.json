@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "ITR",
+      "field": "itrAcknowledgementNumber",
+      "triggerType": "required",
+      "errorMessage": "ITR acknowledgement number is required",
+      "order": 1
+    },
+    {
+      "documentType": "ITR",
+      "field": "itrAcknowledgementNumber",
+      "triggerType": "regex",
+      "condition": "^\\d{15}$",
+      "errorMessage": "ITR acknowledgement number should be 15 digits",
+      "order": 2
+    },
+    {
+      "documentType": "ITR",
+      "field": "pan",
+      "triggerType": "required",
+      "errorMessage": "PAN is required for ITR validation",
+      "order": 3
+    },
+    {
+      "documentType": "ITR",
+      "field": "pan",
+      "triggerType": "regex",
+      "condition": "^[A-Z]{5}[0-9]{4}[A-Z]{1}$",
+      "errorMessage": "Invalid PAN format in ITR",
+      "order": 4
+    }
+  ]
+}

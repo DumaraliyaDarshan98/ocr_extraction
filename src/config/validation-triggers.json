@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "PAN",
+      "field": "pan",
+      "triggerType": "required",
+      "errorMessage": "PAN is required",
+      "order": 0
+    },
+    {
+      "documentType": "PAN",
+      "field": "pan",
+      "triggerType": "regex",
+      "condition": "^[A-Z]{5}[0-9]{4}[A-Z]$",
+      "errorMessage": "Invalid PAN format",
+      "order": 1
+    },
+    {
+      "documentType": "Aadhaar",
+      "field": "aadhaar",
+      "triggerType": "required",
+      "errorMessage": "Aadhaar number is required",
+      "order": 0
+    },
+    {
+      "documentType": "Aadhaar",
+      "field": "aadhaar",
+      "triggerType": "regex",
+      "condition": "^[0-9]{12}$",
+      "errorMessage": "Aadhaar must be 12 digits",
+      "order": 1
+    },
+    {
+      "documentType": "Email",
+      "field": "email",
+      "triggerType": "regex",
+      "condition": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+      "errorMessage": "Invalid email format",
+      "order": 0
+    }
+  ]
+}

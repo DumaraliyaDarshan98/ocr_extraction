@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Bank Statement",
+      "field": "accountNumber",
+      "triggerType": "required",
+      "errorMessage": "Account number is required",
+      "order": 1
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "accountNumber",
+      "triggerType": "regex",
+      "condition": "^[0-9]{9,18}$",
+      "errorMessage": "Invalid bank account number",
+      "order": 2
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "bankName",
+      "triggerType": "required",
+      "errorMessage": "Bank name is required",
+      "order": 3
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "bankName",
+      "triggerType": "minLength",
+      "condition": "2",
+      "errorMessage": "Bank name is too short",
+      "order": 4
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "statementIssueDate",
+      "triggerType": "required",
+      "errorMessage": "Statement issue date is required",
+      "order": 5
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "statementIssueDate",
+      "triggerType": "regex",
+      "condition": "^\\d{4}-\\d{2}-\\d{2}$",
+      "errorMessage": "Statement issue date must be YYYY-MM-DD",
+      "order": 6
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "statementIssueDate",
+      "triggerType": "custom",
+      "customKey": "dateNotWeekend",
+      "errorMessage": "Statement issue date should not be on weekend",
+      "order": 7
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "chequeNumbers",
+      "triggerType": "required",
+      "errorMessage": "Cheque numbers are required",
+      "order": 8
+    },
+    {
+      "documentType": "Bank Statement",
+      "field": "chequeNumbers",
+      "triggerType": "custom",
+      "customKey": "chequeNumbersInSeries",
+      "condition": "step=1",
+      "errorMessage": "Cheque numbers should be in series",
+      "order": 9
+    }
+  ]
+}
+

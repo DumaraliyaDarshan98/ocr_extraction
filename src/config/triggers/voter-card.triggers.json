@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Voter Card",
+      "field": "voterId",
+      "triggerType": "required",
+      "errorMessage": "Voter ID is required",
+      "order": 1
+    },
+    {
+      "documentType": "Voter Card",
+      "field": "voterId",
+      "triggerType": "regex",
+      "condition": "^[A-Z]{3}[0-9]{7}$",
+      "errorMessage": "Invalid voter ID format",
+      "order": 2
+    },
+    {
+      "documentType": "Voter Card",
+      "field": "name",
+      "triggerType": "required",
+      "errorMessage": "Name is required",
+      "order": 3
+    },
+    {
+      "documentType": "Voter Card",
+      "field": "dob",
+      "triggerType": "required",
+      "errorMessage": "DOB is required",
+      "order": 4
+    },
+    {
+      "documentType": "Voter Card",
+      "field": "dob",
+      "triggerType": "regex",
+      "condition": "^\\d{4}-\\d{2}-\\d{2}$",
+      "errorMessage": "DOB must be YYYY-MM-DD",
+      "order": 5
+    }
+  ]
+}

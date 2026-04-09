@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Driving License",
+      "field": "drivingLicenseNumber",
+      "triggerType": "required",
+      "errorMessage": "Driving license number is required",
+      "order": 1
+    },
+    {
+      "documentType": "Driving License",
+      "field": "drivingLicenseNumber",
+      "triggerType": "regex",
+      "condition": "^[A-Z]{2}[0-9]{2}[0-9A-Z]{8,16}$",
+      "errorMessage": "Invalid driving license number format",
+      "order": 2
+    },
+    {
+      "documentType": "Driving License",
+      "field": "name",
+      "triggerType": "required",
+      "errorMessage": "Name is required",
+      "order": 3
+    },
+    {
+      "documentType": "Driving License",
+      "field": "dob",
+      "triggerType": "required",
+      "errorMessage": "DOB is required",
+      "order": 4
+    },
+    {
+      "documentType": "Driving License",
+      "field": "dob",
+      "triggerType": "regex",
+      "condition": "^\\d{4}-\\d{2}-\\d{2}$",
+      "errorMessage": "DOB must be YYYY-MM-DD",
+      "order": 5
+    }
+  ]
+}

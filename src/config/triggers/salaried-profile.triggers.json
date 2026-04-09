@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Salaried Profile",
+      "field": "employerOfficialEmailDomain",
+      "triggerType": "required",
+      "errorMessage": "Official employer email domain is required",
+      "order": 1
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "employerOfficialEmailDomain",
+      "triggerType": "custom",
+      "customKey": "emailDomainNotGeneric",
+      "errorMessage": "Email domain looks generic/free",
+      "order": 2
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "domainCheckLink",
+      "triggerType": "required",
+      "errorMessage": "Domain check link is required",
+      "order": 3
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "domainCheckLink",
+      "triggerType": "regex",
+      "condition": "^https?://",
+      "errorMessage": "Domain check link must be a valid URL",
+      "order": 4
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "linkedInProfileUrl",
+      "triggerType": "required",
+      "errorMessage": "LinkedIn profile URL is required",
+      "order": 5
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "linkedInProfileUrl",
+      "triggerType": "regex",
+      "condition": "^https?://",
+      "errorMessage": "LinkedIn profile URL must be a valid URL",
+      "order": 6
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "isSalaryIrregular",
+      "triggerType": "required",
+      "errorMessage": "Salary irregularity flag is required",
+      "order": 7
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "isSalaryIrregular",
+      "triggerType": "custom",
+      "customKey": "mustBeFalse",
+      "errorMessage": "Irregular salary pattern detected",
+      "order": 8
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "last6MonthsSalaryAverage",
+      "triggerType": "required",
+      "errorMessage": "Last 6 months salary average is required",
+      "order": 9
+    },
+    {
+      "documentType": "Salaried Profile",
+      "field": "last6MonthsSalaryAverage",
+      "triggerType": "regex",
+      "condition": "^[0-9]+$",
+      "errorMessage": "Last 6 months salary average must be numeric",
+      "order": 10
+    }
+  ]
+}
+

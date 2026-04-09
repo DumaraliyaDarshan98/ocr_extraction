@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "PAN",
+      "field": "pan",
+      "triggerType": "required",
+      "errorMessage": "PAN is required",
+      "order": 1
+    },
+    {
+      "documentType": "PAN",
+      "field": "pan",
+      "triggerType": "regex",
+      "condition": "^[A-Z]{5}[0-9]{4}[A-Z]$",
+      "errorMessage": "Invalid PAN format",
+      "order": 2
+    },
+    {
+      "documentType": "PAN",
+      "field": "pan",
+      "triggerType": "custom",
+      "customKey": "panFourthCharAllowed",
+      "condition": "C,P,H,F,A,T,B,L,J,G",
+      "errorMessage": "Invalid PAN entity type (4th character)",
+      "order": 3
+    },
+    {
+      "documentType": "PAN",
+      "field": "name",
+      "triggerType": "required",
+      "errorMessage": "Name is required",
+      "order": 4
+    },
+    {
+      "documentType": "PAN",
+      "field": "pan",
+      "triggerType": "custom",
+      "customKey": "panFifthCharMatchesNameInitial",
+      "secondaryField": "name",
+      "errorMessage": "PAN 5th character must match first letter of name",
+      "order": 5
+    },
+    {
+      "documentType": "PAN",
+      "field": "dob",
+      "triggerType": "required",
+      "errorMessage": "DOB is required",
+      "order": 6
+    },
+    {
+      "documentType": "PAN",
+      "field": "dob",
+      "triggerType": "regex",
+      "condition": "^\\d{2}-\\d{2}-\\d{4}$",
+      "errorMessage": "DOB must be DD-MM-YYYY",
+      "order": 7
+    }
+  ]
+}

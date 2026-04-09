@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Financial",
+      "field": "name",
+      "triggerType": "required",
+      "errorMessage": "Name is required",
+      "order": 1
+    },
+    {
+      "documentType": "Financial",
+      "field": "address",
+      "triggerType": "required",
+      "errorMessage": "Address is required",
+      "order": 2
+    },
+    {
+      "documentType": "Financial",
+      "field": "financialYear",
+      "triggerType": "required",
+      "errorMessage": "Financial year is required",
+      "order": 3
+    },
+    {
+      "documentType": "Financial",
+      "field": "udin",
+      "triggerType": "required",
+      "errorMessage": "UDIN is required",
+      "order": 4
+    },
+    {
+      "documentType": "Financial",
+      "field": "udin",
+      "triggerType": "regex",
+      "condition": "^[A-Z0-9]{10,25}$",
+      "errorMessage": "Invalid UDIN format",
+      "order": 5
+    }
+  ]
+}

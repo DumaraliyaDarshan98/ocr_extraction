@@ -1,0 +1,396 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Salary Slip",
+      "field": "employeeName",
+      "triggerType": "required",
+      "errorMessage": "Employee name is required",
+      "order": 1
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "employerName",
+      "triggerType": "required",
+      "errorMessage": "Employer name is required",
+      "order": 2
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "salaryMonthYear",
+      "triggerType": "required",
+      "errorMessage": "Salary month/year is required",
+      "order": 3
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "grossSalary",
+      "triggerType": "required",
+      "errorMessage": "Gross salary is required",
+      "order": 4
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "grossSalary",
+      "triggerType": "regex",
+      "condition": "^[0-9]+$",
+      "errorMessage": "Gross salary must be numeric",
+      "order": 5
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "netSalary",
+      "triggerType": "required",
+      "errorMessage": "Net salary is required",
+      "order": 6
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "netSalary",
+      "triggerType": "regex",
+      "condition": "^[0-9]+$",
+      "errorMessage": "Net salary must be numeric",
+      "order": 7
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "netSalary",
+      "triggerType": "custom",
+      "customKey": "netSalaryNotExceedGross",
+      "secondaryField": "grossSalary",
+      "errorMessage": "Net salary should not exceed gross salary",
+      "order": 8
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "pfDeductionRatePercent",
+      "triggerType": "required",
+      "errorMessage": "PF deduction rate is required",
+      "order": 9
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "pfDeductionRatePercent",
+      "triggerType": "regex",
+      "condition": "^[0-9]+(\\.[0-9]+)?$",
+      "errorMessage": "PF deduction rate must be numeric",
+      "order": 10
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "pfDeductionRatePercent",
+      "triggerType": "custom",
+      "customKey": "pfDeductionRateAtLeast12Percent",
+      "errorMessage": "PF deduction rate should be >= 12%",
+      "order": 11
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "bankAccountNumber",
+      "triggerType": "required",
+      "errorMessage": "Bank account number is required",
+      "order": 12
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "bankAccountNumber",
+      "triggerType": "regex",
+      "condition": "^[0-9]{9,18}$",
+      "errorMessage": "Invalid bank account number",
+      "order": 13
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "professionalTaxAmount",
+      "triggerType": "required",
+      "errorMessage": "Professional tax amount is required",
+      "order": 14
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "professionalTaxAmount",
+      "triggerType": "regex",
+      "condition": "^[0-9]+$",
+      "errorMessage": "Professional tax must be numeric",
+      "order": 15
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "epfoEmployeeName",
+      "triggerType": "required",
+      "errorMessage": "EPFO employee name is required",
+      "order": 16
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "employeeName",
+      "triggerType": "match",
+      "secondaryField": "epfoEmployeeName",
+      "errorMessage": "Employee name does not match EPFO portal",
+      "order": 17
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "panMentionedInPaySlip",
+      "triggerType": "required",
+      "errorMessage": "PAN on pay slip is required",
+      "order": 18
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "panMentionedInPaySlip",
+      "triggerType": "match",
+      "secondaryField": "pan",
+      "errorMessage": "PAN mentioned in pay slip must match applicant PAN",
+      "order": 19
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "companyLogoPresent",
+      "triggerType": "required",
+      "errorMessage": "Company logo presence is required",
+      "order": 20
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "companyLogoPresent",
+      "triggerType": "custom",
+      "customKey": "mustBeTrue",
+      "errorMessage": "Company logo should be present",
+      "order": 21
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "formatQuality",
+      "triggerType": "required",
+      "errorMessage": "Salary slip format quality is required",
+      "order": 22
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "formatQuality",
+      "triggerType": "custom",
+      "customKey": "formatQualityNotDoubtful",
+      "errorMessage": "Salary slip format appears doubtful",
+      "order": 23
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "salaryAmountFigures",
+      "triggerType": "required",
+      "errorMessage": "Salary amount (figures) is required",
+      "order": 24
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "salaryAmountWords",
+      "triggerType": "required",
+      "errorMessage": "Salary amount (words) is required",
+      "order": 25
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "salaryAmountFigures",
+      "triggerType": "custom",
+      "customKey": "numericAmountsEqual",
+      "secondaryField": "salaryAmountWords",
+      "errorMessage": "Amount in figures and words differ",
+      "order": 26
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "statutoryDeductionsPresent",
+      "triggerType": "required",
+      "errorMessage": "Statutory deductions must be present",
+      "order": 27
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "statutoryDeductionsPresent",
+      "triggerType": "custom",
+      "customKey": "mustBeTrue",
+      "errorMessage": "No statutory deductions found",
+      "order": 28
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "workingDays",
+      "triggerType": "required",
+      "errorMessage": "Working days is required",
+      "order": 29
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "workingDays",
+      "triggerType": "custom",
+      "customKey": "workingDaysMatchesMonthDays",
+      "secondaryField": "daysInMonth",
+      "errorMessage": "Working days do not match the month",
+      "order": 30
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "isHandwritten",
+      "triggerType": "required",
+      "errorMessage": "Handwritten flag is required",
+      "order": 31
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "isHandwritten",
+      "triggerType": "custom",
+      "customKey": "mustBeFalse",
+      "errorMessage": "Handwritten salary slips are not allowed",
+      "order": 32
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "companyName",
+      "triggerType": "required",
+      "errorMessage": "Company name is required",
+      "order": 33
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "epfoCompanyName",
+      "triggerType": "required",
+      "errorMessage": "EPFO company name is required",
+      "order": 34
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "companyName",
+      "triggerType": "match",
+      "secondaryField": "epfoCompanyName",
+      "errorMessage": "Company name does not match EPFO portal",
+      "order": 35
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "empCode",
+      "triggerType": "required",
+      "errorMessage": "Employee code is required",
+      "order": 36
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "empCode",
+      "triggerType": "match",
+      "secondaryField": "jobId",
+      "errorMessage": "Employee code does not match Job ID card",
+      "order": 37
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "transferToThirdParty",
+      "triggerType": "required",
+      "errorMessage": "Third-party transfer flag is required",
+      "order": 38
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "transferToThirdParty",
+      "triggerType": "custom",
+      "customKey": "mustBeFalse",
+      "errorMessage": "Immediate transfer to third party detected",
+      "order": 39
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "employerOfficialEmailDomain",
+      "triggerType": "required",
+      "errorMessage": "Employer official email domain is required",
+      "order": 40
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "employerOfficialEmailDomain",
+      "triggerType": "custom",
+      "customKey": "emailDomainNotGeneric",
+      "errorMessage": "Email domain looks generic/free",
+      "order": 41
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "domainCheckLink",
+      "triggerType": "required",
+      "errorMessage": "Domain check link is required",
+      "order": 42
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "domainCheckLink",
+      "triggerType": "regex",
+      "condition": "^https?://",
+      "errorMessage": "Domain check link must be a valid URL",
+      "order": 43
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "cashAllowances",
+      "triggerType": "required",
+      "errorMessage": "Cash allowances value is required",
+      "order": 44
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "cashAllowances",
+      "triggerType": "regex",
+      "condition": "^[0-9]+$",
+      "errorMessage": "Cash allowances must be numeric",
+      "order": 45
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "cashAllowances",
+      "triggerType": "custom",
+      "customKey": "cashAllowancesBelowThreshold",
+      "condition": "0",
+      "errorMessage": "Higher cash allowances detected",
+      "order": 46
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "incomeTaxDeduction",
+      "triggerType": "required",
+      "errorMessage": "Income tax deduction is required",
+      "order": 47
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "incomeTaxDeduction",
+      "triggerType": "custom",
+      "customKey": "incomeTaxDeductionRateAtLeast",
+      "secondaryField": "grossSalary",
+      "condition": "40",
+      "errorMessage": "Income tax deduction rate is below expected threshold",
+      "order": 48
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "signatoryDesignationDepartment",
+      "triggerType": "required",
+      "errorMessage": "Signatory department/designation is required",
+      "order": 49
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "signatoryDesignationDepartment",
+      "triggerType": "custom",
+      "customKey": "signatoryFromFinance",
+      "errorMessage": "Signatory does not appear to originate from finance/accounts",
+      "order": 50
+    },
+    {
+      "documentType": "Salary Slip",
+      "field": "salaryMonthYear",
+      "triggerType": "custom",
+      "customKey": "salaryMonthYearNotOlderThanMonths",
+      "condition": "6",
+      "secondaryField": "salaryMonthYear",
+      "errorMessage": "Salary month/year appears too old or manipulated",
+      "order": 51
+    }
+  ]
+}
+

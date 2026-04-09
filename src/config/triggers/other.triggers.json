@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Other",
+      "field": "possibleTampering",
+      "triggerType": "required",
+      "errorMessage": "Possible tampering flag is missing",
+      "order": 1
+    },
+    {
+      "documentType": "Other",
+      "field": "possibleTampering",
+      "triggerType": "equals",
+      "condition": "false",
+      "errorMessage": "Document looks tampered (possible overwriting/cut-paste)",
+      "order": 2
+    },
+    {
+      "documentType": "Other",
+      "field": "layoutConsistent",
+      "triggerType": "required",
+      "errorMessage": "Layout consistency flag is missing",
+      "order": 3
+    },
+    {
+      "documentType": "Other",
+      "field": "layoutConsistent",
+      "triggerType": "equals",
+      "condition": "true",
+      "errorMessage": "Document layout looks inconsistent",
+      "order": 4
+    },
+    {
+      "documentType": "Other",
+      "field": "authenticityScore",
+      "triggerType": "required",
+      "errorMessage": "Authenticity score is missing",
+      "order": 5
+    },
+    {
+      "documentType": "Other",
+      "field": "authenticityScore",
+      "triggerType": "custom",
+      "customKey": "authenticityScoreAtLeast",
+      "condition": "70",
+      "errorMessage": "Document authenticity score is too low",
+      "order": 6
+    }
+  ]
+}
+

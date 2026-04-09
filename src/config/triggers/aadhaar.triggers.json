@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Aadhaar",
+      "field": "aadhaar",
+      "triggerType": "required",
+      "errorMessage": "Aadhaar number is required",
+      "order": 1
+    },
+    {
+      "documentType": "Aadhaar",
+      "field": "aadhaar",
+      "triggerType": "regex",
+      "condition": "^[0-9]{12}$",
+      "errorMessage": "Aadhaar must be 12 digits",
+      "order": 2
+    },
+    {
+      "documentType": "Aadhaar",
+      "field": "dob",
+      "triggerType": "required",
+      "errorMessage": "DOB is required",
+      "order": 3
+    },
+    {
+      "documentType": "Aadhaar",
+      "field": "dob",
+      "triggerType": "regex",
+      "condition": "^\\d{4}-\\d{2}-\\d{2}$",
+      "errorMessage": "DOB must be YYYY-MM-DD",
+      "order": 4
+    },
+    {
+      "documentType": "Aadhaar",
+      "field": "name",
+      "triggerType": "required",
+      "errorMessage": "Name is required",
+      "order": 5
+    }
+  ]
+}

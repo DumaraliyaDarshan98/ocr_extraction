@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "documentType": "Trade License",
+      "field": "tradeLicenseIssueDate",
+      "triggerType": "required",
+      "errorMessage": "Trade license issue date is required",
+      "order": 1
+    },
+    {
+      "documentType": "Trade License",
+      "field": "tradeLicenseIssueDate",
+      "triggerType": "regex",
+      "condition": "^\\d{4}-\\d{2}-\\d{2}$",
+      "errorMessage": "Trade license issue date must be YYYY-MM-DD",
+      "order": 2
+    },
+    {
+      "documentType": "Trade License",
+      "field": "tradeLicenseIssuedBy",
+      "triggerType": "required",
+      "errorMessage": "Trade license issuing authority is required",
+      "order": 3
+    },
+    {
+      "documentType": "Trade License",
+      "field": "tradeLicenseSignaturePresent",
+      "triggerType": "required",
+      "errorMessage": "Trade license signature presence is required",
+      "order": 4
+    },
+    {
+      "documentType": "Trade License",
+      "field": "tradeLicenseSignaturePresent",
+      "triggerType": "custom",
+      "customKey": "mustBeTrue",
+      "errorMessage": "Trade license signature should be present",
+      "order": 5
+    },
+    {
+      "documentType": "Trade License",
+      "field": "tradeLicenseOverwriteOrSpellingMistakeDetected",
+      "triggerType": "required",
+      "errorMessage": "Overwrite/spelling issue flag is required",
+      "order": 6
+    },
+    {
+      "documentType": "Trade License",
+      "field": "tradeLicenseOverwriteOrSpellingMistakeDetected",
+      "triggerType": "custom",
+      "customKey": "mustBeFalse",
+      "errorMessage": "Overwriting/spelling mistakes detected in trade license",
+      "order": 7
+    }
+  ]
+}
+

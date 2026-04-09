@@ -1,0 +1,44 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "predev": "node src/scripts/killPort5000.js",
+    "dev": "ts-node-dev --exit-child --transpile-only src/server.ts",
+    "import-triggers": "ts-node src/scripts/importTriggersFromExcel.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/genai": "^1.45.0",
+    "@google/generative-ai": "^0.11.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@vladmandic/face-api": "^1.7.15",
+    "canvas": "^3.2.2",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "jimp": "^1.6.0",
+    "multer": "^2.1.1",
+    "openai": "^4.104.0",
+    "qrcode-reader": "^1.0.4",
+    "sharp": "^0.34.5",
+    "string-similarity": "^4.0.4",
+    "tesseract.js": "^7.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
+    "@types/string-similarity": "^4.0.2",
+    "@types/xlsx": "^0.0.35",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}
