@@ -703,6 +703,52 @@ function buildStructuredExtractionPrompt(documentTypeHint: string): string {
   `;
 }
 
+function buildRcuTriggerPrompt(
+  documentTypeHint: string,
+  extractedData: Record<string, unknown>,
+  rcuTriggers: Array<{ code: string; text: string; risk?: string; section?: string | null }>
+): string {
+  const triggerList = rcuTriggers
+    .map(
+      (t, i) =>
+        `${i + 1}. code="${t.code}" risk="${t.risk ?? ""}" section="${t.section ?? ""}"
+   rule: ${t.text}`
+    )
+    .join("\n");
+
+  return `
+    You are an RCU (Risk Containment Unit) document reviewer.
+
+    Document type: ${documentTypeHint}
+
+    Extracted data (use as supporting evidence, but also inspect the document image):
+    ${JSON.stringify(extractedData)}
+
+    Evaluate EVERY trigger below against the document.
+    Do not skip any trigger.
+    Do not invent extra triggers.
+
+    Triggers:
+    ${triggerList}
+
+    Return ONLY valid minified JSON:
+    {
+      "triggerResults": [
+        {
+          "code": "TRIGGER_CODE",
+          "status": "passed",
+          "message": "short reason based on the document"
+        }
+      ]
+    }
+
+    Rules:
+    - status must be "passed" or "failed"
+    - message must explain why it passed or failed
+    - If the document does not contain enough evidence, mark it "failed"
+  `;
+}
+
 /* ---------------- MAIN PROMPT (OPTIMIZED ONLY) ---------------- */
 // function buildStructuredExtractionPrompt(documentTypeHint: string): string {
 //   const typeSpecificPrompt = getTypeSpecificPrompt(documentTypeHint);
@@ -740,6 +786,11 @@ export interface StructuredExtractionResult {
   data: Record<string, unknown>;
   fieldConfidence: Record<string, number>;
   rawText: string;
+  triggerResults?: Array<{
+    code: string;
+    status: "passed" | "failed";
+    message: string;
+  }>;
 }
 
 /* ---------------- RETRY ---------------- */
@@ -824,7 +875,8 @@ async function generateContentWithRetryAndFallback(args: {
 export async function extractStructuredDataFromDocument(
   filePath: string,
   documentTypeHint: string,
-  mimeTypeHint?: string
+  mimeTypeHint?: string,
+  rcuTriggers?: Array<{ code: string; text: string; risk?: string; section?: string | null }>
 ): Promise<StructuredExtractionResult | null> {
   try {
     let absolutePath = path.resolve(filePath);
@@ -850,9 +902,33 @@ export async function extractStructuredDataFromDocument(
     });
 
     const parsed = parseJsonObjectFromModelText(rawText);
+    delete parsed.triggerResults;
     const { flat, confidence } = normalizeExtractedPayload(parsed);
+    delete flat.triggerResults;
 
-    return { data: flat, fieldConfidence: confidence, rawText };
+    let triggerResults: StructuredExtractionResult["triggerResults"] = [];
+    if (rcuTriggers?.length) {
+      try {
+        const triggerPrompt = buildRcuTriggerPrompt(
+          documentTypeHint,
+          flat,
+          rcuTriggers
+        );
+        const triggerRaw = await generateContentWithRetryAndFallback({
+          modelNames: getFallbackModelNames(),
+          prompt: triggerPrompt,
+          mimeType,
+          base64Image,
+        });
+        const triggerParsed = parseJsonObjectFromModelText(triggerRaw);
+        triggerResults = parseTriggerResults(triggerParsed.triggerResults, rcuTriggers);
+      } catch (triggerError) {
+        console.log("RCU trigger prompt failed:", triggerError);
+        triggerResults = parseTriggerResults(undefined, rcuTriggers);
+      }
+    }
+
+    return { data: flat, fieldConfidence: confidence, rawText, triggerResults };
   } catch (error) {
     console.log("❌ ERROR:", error);
 
@@ -860,6 +936,44 @@ export async function extractStructuredDataFromDocument(
       data: {},
       fieldConfidence: {},
       rawText: "Extraction failed",
+      triggerResults: [],
     };
   }
+}
+
+function parseTriggerResults(
+  raw: unknown,
+  rcuTriggers?: Array<{ code: string; text: string; risk?: string; section?: string | null }>
+): Array<{ code: string; status: "passed" | "failed"; message: string }> {
+  const byCode = new Map<string, { code: string; status: "passed" | "failed"; message: string }>();
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Record<string, unknown>;
+      const code = String(rec.code ?? rec.field ?? "").trim();
+      if (!code) continue;
+      const statusRaw = String(rec.status ?? "").toLowerCase();
+      const status: "passed" | "failed" = statusRaw === "passed" ? "passed" : "failed";
+      byCode.set(code, {
+        code,
+        status,
+        message: String(rec.message ?? rec.details ?? "").trim(),
+      });
+    }
+  }
+
+  if (!rcuTriggers?.length) {
+    return [...byCode.values()];
+  }
+
+  return rcuTriggers.map((t) => {
+    const found = byCode.get(t.code);
+    if (found) return found;
+    return {
+      code: t.code,
+      status: "failed" as const,
+      message: "Trigger was not evaluated from the document",
+    };
+  });
 }

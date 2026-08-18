@@ -16,6 +16,7 @@ export interface TriggerResultItem {
   triggerType: string;
   status: "passed" | "failed";
   message: string;
+  text?: string;
 }
 
 export interface KycApiResponse {

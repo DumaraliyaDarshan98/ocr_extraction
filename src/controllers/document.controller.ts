@@ -44,6 +44,42 @@ export const verifyDocument = async (req: Request, res: Response) => {
     const requireDob =
       String(req.body?.requireDob ?? "").toLowerCase() === "true";
     const selfiePath = files?.selfie?.[0]?.path;
+    const useRcuTriggers =
+      String(req.body?.useRcuTriggers ?? "").toLowerCase() === "true";
+    let rcuTriggers: Array<{
+      code: string;
+      text: string;
+      risk?: string;
+      section?: string | null;
+    }> = [];
+    if (req.body?.triggers) {
+      try {
+        const parsed =
+          typeof req.body.triggers === "string"
+            ? JSON.parse(req.body.triggers)
+            : req.body.triggers;
+        if (Array.isArray(parsed)) {
+          rcuTriggers = parsed
+            .filter((t) => t && typeof t === "object" && t.text)
+            .map((t) => {
+              const item: {
+                code: string;
+                text: string;
+                risk?: string;
+                section?: string | null;
+              } = {
+                code: String(t.code ?? ""),
+                text: String(t.text ?? ""),
+              };
+              if (t.risk) item.risk = String(t.risk);
+              if (t.section) item.section = String(t.section);
+              return item;
+            });
+        }
+      } catch {
+        rcuTriggers = [];
+      }
+    }
 
     if (!filePath) {
       return badRequest(res, "File missing (field: file)");
@@ -59,6 +95,7 @@ export const verifyDocument = async (req: Request, res: Response) => {
       selfiePath,
       expectedName,
       requireDob,
+      ...(useRcuTriggers || rcuTriggers.length ? { rcuTriggers } : {}),
     });
 
     res.json(result);

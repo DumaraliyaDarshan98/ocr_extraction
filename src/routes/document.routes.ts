@@ -18,7 +18,8 @@ const upload = multer({
     }
     const isImage = mime.startsWith("image/");
     const isPdf = mime === "application/pdf";
-    cb(null, isImage || isPdf);
+    const isOctetStream = mime === "application/octet-stream";
+    cb(null, isImage || isPdf || isOctetStream);
   },
 });
 const uploadKyc = upload.fields([

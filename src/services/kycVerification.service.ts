@@ -29,6 +29,13 @@ export interface KycRunOptions {
   expectedName?: string | undefined;
   /** If true, missing DOB in extraction counts as failure */
   requireDob?: boolean | undefined;
+  /** RCU DB triggers. When provided, JSON custom triggers are skipped. */
+  rcuTriggers?: Array<{
+    code: string;
+    text: string;
+    risk?: string;
+    section?: string | null;
+  }>;
 }
 
 function pickFirstString(
@@ -528,6 +535,80 @@ export async function runKycVerification(
   const errors: KycError[] = [];
   const checks: KycCheck[] = [];
   const normalizedType = (options.documentType || "").toLowerCase();
+  const rcuTriggers = options.rcuTriggers;
+  const useRcuTriggers = Array.isArray(rcuTriggers);
+  const canUseGemini = !!process.env.GEMINI_API_KEY;
+
+  let extractedData: Record<string, unknown> = {};
+  let confidence: Record<string, number> = {};
+  let extractionOk = false;
+  let triggerResults: TriggerResultItem[] = [];
+
+  if (useRcuTriggers) {
+    if (!canUseGemini) {
+      return {
+        success: true,
+        documentType: normalizedType,
+        isValid: false,
+        extractedData: {},
+        confidence: {},
+        faceMatchScore: null,
+        nameMatchScore: null,
+        checks: [],
+        triggerResults: [],
+        errors: [{ field: "extraction", message: "Gemini extraction unavailable (check GEMINI_API_KEY)" }],
+        message: "Gemini extraction unavailable (check GEMINI_API_KEY)",
+      };
+    }
+
+    const extracted = await extractStructuredDataFromDocument(
+      options.documentPath,
+      normalizedType,
+      options.documentMimeType,
+      rcuTriggers
+    );
+
+    if (!extracted) {
+      return {
+        success: true,
+        documentType: normalizedType,
+        isValid: false,
+        extractedData: {},
+        confidence: {},
+        faceMatchScore: null,
+        nameMatchScore: null,
+        checks: [],
+        triggerResults: [],
+        errors: [{ field: "extraction", message: "Extraction failed" }],
+        message: "Extraction failed",
+      };
+    }
+
+    triggerResults = (extracted.triggerResults ?? []).map((r) => {
+      const source = rcuTriggers?.find((t) => t.code === r.code);
+      return {
+        field: r.code || source?.code || "trigger",
+        triggerType: source?.risk || "rcu",
+        status: r.status,
+        message: r.message || "",
+        text: source?.text || "",
+      };
+    });
+
+    return {
+      success: true,
+      documentType: normalizedType,
+      isValid: true,
+      extractedData: extracted.data,
+      confidence: extracted.fieldConfidence,
+      faceMatchScore: null,
+      nameMatchScore: null,
+      checks: [],
+      triggerResults,
+      errors: [],
+      message: "OCR extraction completed",
+    };
+  }
 
   let ocrText = await extractText(options.documentPath, options.documentMimeType);
 
@@ -542,13 +623,6 @@ export async function runKycVerification(
     normalizedType,
     triggerConfig
   );
-
-  let extractedData: Record<string, unknown> = {};
-  let confidence: Record<string, number> = {};
-  let extractionOk = false;
-  let triggerResults: TriggerResultItem[] = [];
-
-  const canUseGemini = !!process.env.GEMINI_API_KEY;
 
   if (canUseGemini) {
     const extracted = await extractStructuredDataFromDocument(
@@ -570,7 +644,6 @@ export async function runKycVerification(
         thresholds.dobFieldKeys
       );
       confidence = extracted.fieldConfidence;
-      // For the generic "Other" flow, we rely on AI forensics flags.
       if (normalizedType === "other") {
         const ai = await analyzeDocumentAI(
           options.documentPath,
