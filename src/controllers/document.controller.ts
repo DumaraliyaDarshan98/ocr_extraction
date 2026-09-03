@@ -32,6 +32,7 @@ function badRequest(res: Response, message: string): Response {
 }
 
 export const verifyDocument = async (req: Request, res: Response) => {
+  const started = Date.now();
   try {
     const files = req.files as MulterFiles | undefined;
     const primaryFile =
@@ -49,6 +50,11 @@ export const verifyDocument = async (req: Request, res: Response) => {
     const selfiePath = files?.selfie?.[0]?.path;
     const useRcuTriggers =
       String(req.body?.useRcuTriggers ?? "").toLowerCase() === "true";
+
+    console.log(
+      `[OCR:VERIFY] start file="${primaryFile?.originalname ?? "unknown"}" path=${filePath ?? "(missing)"} mime=${primaryFile?.mimetype ?? "unknown"} size=${primaryFile?.size ?? 0} documentType="${documentType}" useRcuTriggers=${useRcuTriggers}`
+    );
+
     let rcuTriggers: Array<{
       code: string;
       text: string;
@@ -79,17 +85,22 @@ export const verifyDocument = async (req: Request, res: Response) => {
               return item;
             });
         }
-      } catch {
+      } catch (parseErr) {
+        console.warn("[OCR:VERIFY] triggers JSON parse failed", parseErr);
         rcuTriggers = [];
       }
     }
 
     if (!filePath) {
+      console.error("[OCR:VERIFY] FAIL File missing (field: file)");
       return badRequest(res, "File missing (field: file)");
     }
     if (!documentType) {
+      console.error("[OCR:VERIFY] FAIL documentType is required");
       return badRequest(res, "documentType is required");
     }
+
+    console.log(`[OCR:VERIFY] triggers loaded count=${rcuTriggers.length}`);
 
     const result = await runKycVerification({
       documentType,
@@ -101,8 +112,15 @@ export const verifyDocument = async (req: Request, res: Response) => {
       ...(useRcuTriggers || rcuTriggers.length ? { rcuTriggers } : {}),
     });
 
+    console.log(
+      `[OCR:VERIFY] OK documentType="${documentType}" success=${result.success} isValid=${result.isValid} triggers=${result.triggerResults?.length ?? 0} ms=${Date.now() - started}`
+    );
+
     res.json(result);
   } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+    console.error(`[OCR:VERIFY] FAIL ms=${Date.now() - started} error="${errMsg}"`, errStack);
     res.status(500).json({
       success: false,
       documentType: null,
@@ -113,8 +131,8 @@ export const verifyDocument = async (req: Request, res: Response) => {
       nameMatchScore: null,
       checks: [],
       triggerResults: [],
-      errors: [{ field: "server", message: "Verification failed" }],
-      message: "Verification failed",
+      errors: [{ field: "server", message: errMsg || "Verification failed" }],
+      message: errMsg || "Verification failed",
     });
   }
 };
@@ -163,11 +181,17 @@ interface SimpleExtractionApiResponse {
  * POST multipart field: file
  */
 export const identifyDocument = async (req: Request, res: Response) => {
+  const started = Date.now();
   try {
     const file = (req as Express.Request & { file?: Express.Multer.File }).file;
     const filePath = file?.path;
 
+    console.log(
+      `[OCR:IDENTIFY] start file="${file?.originalname ?? "unknown"}" path=${filePath ?? "(missing)"} mime=${file?.mimetype ?? "unknown"} size=${file?.size ?? 0}`
+    );
+
     if (!filePath) {
+      console.error("[OCR:IDENTIFY] FAIL File missing (field: file)");
       return res.status(400).json({
         success: false,
         documentType: null,
@@ -178,6 +202,9 @@ export const identifyDocument = async (req: Request, res: Response) => {
 
     const result = await identifyDocumentTypeFromFile(filePath, file?.mimetype);
     if (!result) {
+      console.warn(
+        `[OCR:IDENTIFY] low confidence → Other file="${file?.originalname}" ms=${Date.now() - started}`
+      );
       return res.status(200).json({
         success: true,
         documentType: "Other",
@@ -186,18 +213,25 @@ export const identifyDocument = async (req: Request, res: Response) => {
       });
     }
 
+    console.log(
+      `[OCR:IDENTIFY] OK file="${file?.originalname}" documentType="${result.documentType}" confidence=${result.confidence} ms=${Date.now() - started}`
+    );
+
     return res.json({
       success: true,
       documentType: result.documentType,
       confidence: result.confidence,
       message: "Document identified",
     });
-  } catch {
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+    console.error(`[OCR:IDENTIFY] FAIL ms=${Date.now() - started} error="${errMsg}"`, errStack);
     return res.status(500).json({
       success: false,
       documentType: null,
       confidence: null,
-      message: "Document identification failed",
+      message: errMsg || "Document identification failed",
     });
   }
 };
