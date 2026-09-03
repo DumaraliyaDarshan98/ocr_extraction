@@ -19,6 +19,26 @@ export interface TriggerResultItem {
   text?: string;
 }
 
+export interface ForensicSignalItem {
+  code: string;
+  threatCode: string;
+  severity: "low" | "medium" | "high";
+  score: number;
+  status: "passed" | "failed" | "info";
+  title: string;
+  description: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface ForensicSummaryItem {
+  riskScore: number;
+  verdict: "GENUINE" | "LIKELY_GENUINE" | "SUSPICIOUS" | "TEMP" | "MANUAL_REVIEW";
+  verdictLabel: string;
+  reasons: string[];
+  failedSignalCount: number;
+  failedTriggerCount: number;
+}
+
 export interface KycApiResponse {
   /** False when HTTP 400 or 500; true when the handler completed normally */
   success: boolean;
@@ -32,4 +52,10 @@ export interface KycApiResponse {
   triggerResults: TriggerResultItem[];
   errors: KycError[];
   message: string;
+  /** Phase-1 forensics */
+  fileHash?: string | null;
+  fileSizeBytes?: number | null;
+  pdfMetadata?: Record<string, unknown> | null;
+  forensicSignals?: ForensicSignalItem[];
+  forensicSummary?: ForensicSummaryItem | null;
 }
