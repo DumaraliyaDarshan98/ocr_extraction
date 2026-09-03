@@ -2,7 +2,10 @@ import { Request, Response } from "express";
 import { runKycVerification } from "../services/kycVerification.service";
 import { loadTriggerConfig } from "../services/triggerConfig.service";
 import { runValidationEngine } from "../validation/validationEngine";
-import { extractStructuredDataFromDocument } from "../services/geminiExtraction.service";
+import {
+  extractStructuredDataFromDocument,
+  identifyDocumentTypeFromFile,
+} from "../services/geminiExtraction.service";
 import { extractText } from "../services/ocr.service";
 import type { KycApiResponse } from "../types/kyc.types";
 
@@ -154,6 +157,50 @@ interface SimpleExtractionApiResponse {
   confidence: Record<string, number>;
   message: string;
 }
+
+/**
+ * Classify document type only (no full OCR / RCU).
+ * POST multipart field: file
+ */
+export const identifyDocument = async (req: Request, res: Response) => {
+  try {
+    const file = (req as Express.Request & { file?: Express.Multer.File }).file;
+    const filePath = file?.path;
+
+    if (!filePath) {
+      return res.status(400).json({
+        success: false,
+        documentType: null,
+        confidence: null,
+        message: "File missing (field: file)",
+      });
+    }
+
+    const result = await identifyDocumentTypeFromFile(filePath, file?.mimetype);
+    if (!result) {
+      return res.status(200).json({
+        success: true,
+        documentType: "Other",
+        confidence: 0,
+        message: "Could not confidently identify document; defaulted to Other",
+      });
+    }
+
+    return res.json({
+      success: true,
+      documentType: result.documentType,
+      confidence: result.confidence,
+      message: "Document identified",
+    });
+  } catch {
+    return res.status(500).json({
+      success: false,
+      documentType: null,
+      confidence: null,
+      message: "Document identification failed",
+    });
+  }
+};
 
 export const extractDocumentSimple = async (req: Request, res: Response) => {
   try {

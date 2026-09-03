@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import {
   extractDocumentSimple,
+  identifyDocument,
   validateExtractedData,
   verifyDocument,
 } from "../controllers/document.controller";
@@ -30,6 +31,7 @@ const uploadSingleDocument = upload.single("file");
 
 router.post("/verify", uploadKyc, verifyDocument);
 router.post("/validate", validateExtractedData);
+router.post("/identify", uploadSingleDocument, identifyDocument);
 router.post("/extract-simple", uploadSingleDocument, extractDocumentSimple);
 
 export default router;

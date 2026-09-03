@@ -977,3 +977,70 @@ function parseTriggerResults(
     };
   });
 }
+
+const KNOWN_DOCUMENT_TYPES = [
+  "PAN",
+  "Aadhaar",
+  "Voter Card",
+  "Driving License",
+  "Passport",
+  "Salary Slip",
+  "Form 16",
+  "Bank Statement",
+  "ITR",
+  "GST",
+  "Trade License",
+  "Address Proof",
+  "Agreement",
+  "Ownership Deed",
+  "Other",
+];
+
+/**
+ * Lightweight classification: detect document type without full field extraction.
+ */
+export async function identifyDocumentTypeFromFile(
+  filePath: string,
+  mimeTypeHint?: string
+): Promise<{ documentType: string; confidence: number } | null> {
+  try {
+    let absolutePath = path.resolve(filePath);
+    absolutePath = await prepareImage(absolutePath);
+
+    const imageBuffer = await fs.promises.readFile(absolutePath);
+    const base64Image = imageBuffer.toString("base64");
+    const mimeType = getMimeType(absolutePath, mimeTypeHint);
+
+    const prompt = `
+Identify the Indian KYC / financial document type from this file.
+
+Return ONLY valid minified JSON:
+{"documentType":"","confidence":0}
+
+Rules:
+- documentType must be one of: ${KNOWN_DOCUMENT_TYPES.join(", ")}
+- If unsure, use "Other"
+- confidence is 0 to 1
+- No markdown, no explanation
+`;
+
+    const rawText = await generateContentWithRetryAndFallback({
+      modelNames: getFallbackModelNames(),
+      prompt,
+      mimeType,
+      base64Image,
+    });
+
+    const parsed = parseJsonObjectFromModelText(rawText);
+    const documentType = String(parsed.documentType ?? "Other").trim() || "Other";
+    const confidenceRaw = Number(parsed.confidence);
+    const confidence = Number.isFinite(confidenceRaw)
+      ? Math.min(1, Math.max(0, confidenceRaw))
+      : 0.5;
+
+    return { documentType, confidence };
+  } catch (err) {
+    console.log("identifyDocumentTypeFromFile failed:", err);
+    return null;
+  }
+}
