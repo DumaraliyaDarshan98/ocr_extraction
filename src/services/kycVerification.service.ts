@@ -12,6 +12,7 @@ import { computeNameMatchScorePercent } from "./nameMatch.service";
 import { validateDobIso } from "./dobValidation.service";
 import { compareFaceImages } from "./faceMatch.service";
 import { getKycThresholds } from "../config/kyc.config";
+import { runDocumentForensics } from "./forensics";
 import type {
   KycApiResponse,
   KycCheck,
@@ -595,10 +596,18 @@ export async function runKycVerification(
       };
     });
 
+    const forensics = runDocumentForensics({
+      filePath: options.documentPath,
+      ...(options.documentMimeType ? { mimeType: options.documentMimeType } : {}),
+      documentType: normalizedType,
+      extractedData: extracted.data,
+      triggerResults,
+    });
+
     return {
       success: true,
       documentType: normalizedType,
-      isValid: true,
+      isValid: forensics.forensicSummary.verdict !== "TEMP",
       extractedData: extracted.data,
       confidence: extracted.fieldConfidence,
       faceMatchScore: null,
@@ -606,7 +615,12 @@ export async function runKycVerification(
       checks: [],
       triggerResults,
       errors: [],
-      message: "OCR extraction completed",
+      message: "OCR extraction + Phase-1 forensics completed",
+      fileHash: forensics.fileHash,
+      fileSizeBytes: forensics.fileSizeBytes,
+      pdfMetadata: forensics.pdfMetadata,
+      forensicSignals: forensics.forensicSignals,
+      forensicSummary: forensics.forensicSummary,
     };
   }
 
