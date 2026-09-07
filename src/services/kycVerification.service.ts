@@ -612,7 +612,7 @@ export async function runKycVerification(
       };
     });
 
-    const forensics = runDocumentForensics({
+    const forensics = await runDocumentForensics({
       filePath: options.documentPath,
       ...(options.documentMimeType ? { mimeType: options.documentMimeType } : {}),
       ...(options.originalFileName ? { originalFileName: options.originalFileName } : {}),
@@ -625,10 +625,16 @@ export async function runKycVerification(
       ...(options.fileCategory ? { fileCategory: options.fileCategory } : {}),
     });
 
+    const verdict = forensics.forensicSummary.verdict;
+    const notClean =
+      verdict === "TEMP" ||
+      verdict === "SUSPICIOUS" ||
+      verdict === "MANUAL_REVIEW";
+
     return {
       success: true,
       documentType: normalizedType,
-      isValid: forensics.forensicSummary.verdict !== "TEMP",
+      isValid: !notClean,
       extractedData: extracted.data,
       confidence: extracted.fieldConfidence,
       faceMatchScore: null,
@@ -636,7 +642,7 @@ export async function runKycVerification(
       checks: [],
       triggerResults,
       errors: [],
-      message: "OCR extraction + Phase-1 forensics completed",
+      message: `OCR extraction + forensics completed (${forensics.forensicSummary.verdictLabel})`,
       fileHash: forensics.fileHash,
       fileSizeBytes: forensics.fileSizeBytes,
       pdfMetadata: forensics.pdfMetadata,

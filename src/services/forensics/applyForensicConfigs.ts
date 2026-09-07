@@ -46,6 +46,14 @@ function cleanSiblingKey(engineKey: string): string | null {
   if (k === "PDF_PRODUCER_ANOMALY" || k === "PDF_PRODUCER_MISSING") {
     return "PDF_PRODUCER_RECORDED";
   }
+  if (k === "PDF_INCREMENTAL_UPDATE") return "PDF_INCREMENTAL_CLEAN";
+  if (k === "PDF_ANNOTATIONS_PRESENT") return "PDF_ANNOTATIONS_CLEAR";
+  if (k === "IMAGE_ELA_ANOMALY") return "IMAGE_ELA_OK";
+  if (k === "IMAGE_EDITOR_SIGNATURE") return "IMAGE_EDITOR_SIGNATURE_CLEAR";
+  if (k === "VISUAL_TAMPER_DETECTED") return "VISUAL_TAMPER_CLEAR";
+  if (k === "DOC_MODIFIED_AFTER_CREATE") return "DOC_DATES_CONSISTENT";
+  if (k === "DOC_TRACKED_CHANGES") return "DOC_TRACKED_CHANGES_CLEAR";
+  if (k === "ZIP_SUSPICIOUS_ENTRIES") return "ZIP_ENTRIES_CLEAN";
   if (k === "SALARY_NET_MISMATCH") return "SALARY_MATH_OK";
   if (k === "BANK_BALANCE_MISMATCH") return "BANK_MATH_OK";
   return null;
@@ -60,6 +68,13 @@ function isFailOriented(engineKey: string): boolean {
     k.includes("EMPTY") ||
     k.includes("LAYOUT") ||
     k.includes("GAP") ||
+    k.includes("TAMPER") ||
+    k.includes("ANNOTATION") ||
+    k.includes("INCREMENTAL") ||
+    k.includes("TRACKED") ||
+    k.includes("EDITOR") ||
+    k.includes("ELA_") ||
+    k.includes("SUSPICIOUS") ||
     k.endsWith("_MISSING")
   );
 }
@@ -216,18 +231,14 @@ export function applyForensicConfigs(
     });
   }
 
-  // Keep engine failures that are not yet in the admin catalog (new checks).
-  const coveredKeys = new Set(
-    configs
-      .map((c) => String(c?.engineKey || c?.code || "").trim().toUpperCase())
-      .filter(Boolean)
-  );
-  for (const s of signals) {
-    const key = String(s.code || "").trim().toUpperCase();
-    if (!key || coveredKeys.has(key)) continue;
-    if (s.status !== "failed") continue;
-    next.push(s);
-  }
+  /**
+   * Catalog mode (configs != null): ONLY Active + Used-in-OCR rows from admin.
+   * Do NOT re-append engine failures that were deactivated / OCR-disabled —
+   * those keys are intentionally absent from `configs`.
+   *
+   * (Previously we appended "orphan" failures here, which brought inactive
+   * checks back onto the OCR report.)
+   */
 
   const forensicSummary = fuseForensicVerdict(next, triggerResults ?? []);
   return { signals: next, forensicSummary };

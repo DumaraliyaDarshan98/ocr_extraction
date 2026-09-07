@@ -212,5 +212,106 @@ export function analyzePdfMetadata(filePath: string): {
     });
   }
 
+  signals.push(...analyzePdfStructure(filePath));
+
   return { metadata, signals };
+}
+
+/**
+ * Structural PDF tamper clues: incremental saves, annotations (ink/highlight/whiteout-like),
+ * and redact / free-text overlays that binary metadata dates often miss.
+ */
+export function analyzePdfStructure(filePath: string): ForensicSignal[] {
+  const buf = fs.readFileSync(filePath);
+  if (buf.length < 5 || buf.subarray(0, 5).toString("ascii") !== "%PDF-") {
+    return [];
+  }
+
+  const text = buf.toString("latin1");
+  const signals: ForensicSignal[] = [];
+
+  const eofCount = (text.match(/%%EOF/g) || []).length;
+  const hasPrev = /\/Prev\s+\d+/i.test(text);
+  if (eofCount >= 2 || hasPrev) {
+    signals.push({
+      code: "PDF_INCREMENTAL_UPDATE",
+      threatCode: "T006",
+      severity: "high",
+      score: 26,
+      status: "failed",
+      title: "PDF incremental update / re-save",
+      description: `PDF shows incremental save markers (%%EOF×${eofCount}${
+        hasPrev ? ", /Prev xref" : ""
+      }) — common after editing, annotating, or covering content.`,
+      evidence: { eofCount, hasPrev },
+    });
+  } else {
+    signals.push({
+      code: "PDF_INCREMENTAL_CLEAN",
+      threatCode: "T006",
+      severity: "low",
+      score: 0,
+      status: "passed",
+      title: "No incremental PDF update",
+      description: "Single %%EOF / no /Prev — no clear incremental-edit trailer.",
+      evidence: { eofCount },
+    });
+  }
+
+  const annotKinds: Array<{ re: RegExp; label: string }> = [
+    { re: /\/Subtype\s*\/Ink\b/i, label: "Ink" },
+    { re: /\/Subtype\s*\/Highlight\b/i, label: "Highlight" },
+    { re: /\/Subtype\s*\/Squiggly\b/i, label: "Squiggly" },
+    { re: /\/Subtype\s*\/StrikeOut\b/i, label: "StrikeOut" },
+    { re: /\/Subtype\s*\/Underline\b/i, label: "Underline" },
+    { re: /\/Subtype\s*\/FreeText\b/i, label: "FreeText" },
+    { re: /\/Subtype\s*\/Stamp\b/i, label: "Stamp" },
+    { re: /\/Subtype\s*\/Redact\b/i, label: "Redact" },
+    { re: /\/Subtype\s*\/Caret\b/i, label: "Caret" },
+    { re: /\/Subtype\s*\/Text\b/i, label: "Text note" },
+  ];
+  const foundAnnots = annotKinds.filter(({ re }) => re.test(text)).map((a) => a.label);
+  const annotsRef = (text.match(/\/Annots\s*\[/gi) || []).length;
+
+  if (foundAnnots.length || annotsRef >= 2) {
+    signals.push({
+      code: "PDF_ANNOTATIONS_PRESENT",
+      threatCode: "T007",
+      severity: "high",
+      score: 34,
+      status: "failed",
+      title: "PDF annotations / marks detected",
+      description: `Interactive or overlay annotations found (${
+        foundAnnots.length ? foundAnnots.join(", ") : "Annots arrays"
+      }) — marks, covers, or added text that are not part of the original page content.`,
+      evidence: { annotationTypes: foundAnnots, annotsArrays: annotsRef },
+    });
+  } else {
+    signals.push({
+      code: "PDF_ANNOTATIONS_CLEAR",
+      threatCode: "T007",
+      severity: "low",
+      score: 0,
+      status: "passed",
+      title: "No PDF annotation overlays",
+      description: "No Ink/Highlight/FreeText/Stamp/Redact annotation subtypes detected.",
+    });
+  }
+
+  // Soft clue: many Form XObjects + image XObjects often indicate screenshot-to-PDF rebuilds
+  const xobjectCount = (text.match(/\/Subtype\s*\/Image\b/gi) || []).length;
+  if (xobjectCount >= 8 && eofCount >= 2) {
+    signals.push({
+      code: "PDF_IMAGE_HEAVY_REBUILD",
+      threatCode: "T008",
+      severity: "medium",
+      score: 12,
+      status: "failed",
+      title: "Image-heavy PDF after re-save",
+      description: `Found ${xobjectCount} embedded images with incremental saves — possible print/screenshot rebuild after editing.`,
+      evidence: { imageXObjects: xobjectCount, eofCount },
+    });
+  }
+
+  return signals;
 }

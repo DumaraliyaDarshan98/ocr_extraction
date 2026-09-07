@@ -488,17 +488,23 @@ function getTypeSpecificPrompt(documentTypeHint: string): string {
       `,
     },
     {
-      matches: ["bank statement"],
+      matches: ["bank statement", "bank stmt", "bankstmt", "passbook", "account statement"],
       prompt: `
         Bank Statement extraction:
         - accountHolderName
         - accountNumber
         - ifscCode
         - bankName
+        - branchName (if present)
         - statementPeriod
         - openingBalance
         - closingBalance
         - transactions (list if possible)
+        - statementType (manual_passbook / digital / coded / unknown)
+
+        Tampering (mandatory):
+        - tamperingDetected
+        - tamperingType (array or null): whiteout_or_cover, handwritten_mark, highlighter_or_scribble, text_removed_or_erased, text_overwrite, annotation_overlay, cropped_or_cut
       `,
     },
     {
@@ -565,6 +571,10 @@ function getTypeSpecificPrompt(documentTypeHint: string): string {
         -
         - signaturePresent (true/false if visible)
         - companySealPresent (true/false if visible)
+
+        Tampering (mandatory):
+        - tamperingDetected (true if marks, whiteout, erased/overwritten amounts, highlighter, stamps covering figures)
+        - tamperingType (array or null): whiteout_or_cover, handwritten_mark, highlighter_or_scribble, text_removed_or_erased, text_overwrite, stamp_or_seal_cover, photo_pasted, font_mismatch, blur_or_pixelation, annotation_overlay, cropped_or_cut
       `,
     },
     {
@@ -697,6 +707,15 @@ function buildStructuredExtractionPrompt(documentTypeHint: string): string {
     - Medium → 0.6–0.8
     - Low → below 0.5
 
+    ALWAYS include these forensic fields (all document types):
+    - tamperingDetected (true/false) — true if you see marks, scribbles, highlighter, white-out/cover strips, erased or overwritten text, pasted photo/text blocks, blur patches, stamps covering data, or cropped/cut content
+    - tamperingType (array of strings, or null if none)
+      Allowed values: whiteout_or_cover, handwritten_mark, highlighter_or_scribble, text_removed_or_erased, text_overwrite, stamp_or_seal_cover, photo_pasted, font_mismatch, blur_or_pixelation, annotation_overlay, cropped_or_cut
+    Rules for tampering:
+    - Do NOT guess. If unsure → tamperingDetected=false and tamperingType=null
+    - If any clear edit/mark/cover/removal → tamperingDetected=true and list all matching types
+    - Clean original scan/photo with no edits → tamperingDetected=false, tamperingType=null
+
     Mandatory:
     - documentType
     - otherDetails (object)
@@ -752,6 +771,7 @@ function buildRcuTriggerPrompt(
     - "skipped" = not possible to run on this document (wrong doc type, field not visible, or insufficient evidence)
     - message must explain why it passed, failed, or was skipped
     - Prefer "skipped" over "failed" when the trigger simply cannot be applied to this upload
+    - If the document shows whiteout, marks, scribbles, erased text, overwritten amounts, or covering stamps, fail any trigger that depends on those fields and mention the visual edit in the message
   `;
 }
 
@@ -942,7 +962,8 @@ export async function extractStructuredDataFromDocument(
       data: {},
       fieldConfidence: {},
       rawText: "Extraction failed",
-      triggerResults: [],
+      // Still surface every RCU trigger as skipped so the report is not blank.
+      triggerResults: parseTriggerResults(undefined, rcuTriggers),
     };
   }
 }
