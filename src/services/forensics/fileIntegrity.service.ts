@@ -17,7 +17,7 @@ export type ForensicSignal = {
   threatCode: string;
   severity: "low" | "medium" | "high";
   score: number;
-  status: "passed" | "failed" | "info";
+  status: "passed" | "failed" | "info" | "skipped";
   title: string;
   description: string;
   evidence?: Record<string, unknown>;
@@ -59,14 +59,19 @@ function expectedMagicForExt(ext: string): string | null {
 
 /**
  * SHA-256 + basic file identity (does not mutate the original file).
+ * `originalFileName` is preferred for extension checks (temp upload paths often lack an extension).
  */
 export function analyzeFileIntegrity(
   filePath: string,
-  mimeTypeHint?: string
+  mimeTypeHint?: string,
+  originalFileName?: string
 ): FileIntegrityResult {
   const buffer = fs.readFileSync(filePath);
   const sha256 = crypto.createHash("sha256").update(new Uint8Array(buffer)).digest("hex");
-  const extension = normalizeExt(filePath);
+  const extension =
+    normalizeExt(originalFileName || "") ||
+    normalizeExt(filePath) ||
+    mimeExtHint(mimeTypeHint);
   const magic = detectMagic(buffer);
   const expected = expectedMagicForExt(extension);
   const signals: ForensicSignal[] = [];
@@ -117,4 +122,14 @@ export function analyzeFileIntegrity(
     formatMismatch,
     signals,
   };
+}
+
+function mimeExtHint(mimeTypeHint?: string): string {
+  const mime = (mimeTypeHint || "").toLowerCase();
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+  if (mime.includes("png")) return "png";
+  if (mime.includes("webp")) return "webp";
+  if (mime.includes("pdf")) return "pdf";
+  if (mime.includes("gif")) return "gif";
+  return "";
 }

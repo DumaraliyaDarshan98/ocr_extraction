@@ -536,20 +536,24 @@ function getTypeSpecificPrompt(documentTypeHint: string): string {
         - lopDays (loss of pay, if present)
         -
         - earnings (array of { name, arrears, current, amount })
+          IMPORTANT: amount (or current) must be null/empty when the cell is blank on the document.
+          Do NOT invent or back-calculate missing line amounts from totals.
         - deductions (array of { name, amount })
         - reimbursements (array of { name, amount } if present)
         -
-        - totalEarnings (if present)
-        - totalDeductions (if present)
+        - totalEarnings (if present) — read exactly as printed; do not recompute
+        - totalDeductions (if present) — read exactly as printed; do not recompute
         - grossSalary (if present)
         - netSalary
         -
-        - basicSalary (if present)
-        - hra (if present)
-        - conveyanceAllowance (if present)
-        - specialAllowance (if present)
-        - otherAllowances (if present)
+        - basicSalary (if present) — null if blank
+        - hra (if present) — null if blank
+        - conveyanceAllowance (if present) — null if blank
+        - specialAllowance (if present) — null if blank / removed
+        - otherAllowances (if present) — null if blank
         -
+        Consistency rule: if a line label is visible but its amount cell is empty, keep amount null.
+        Never fill specialAllowance (or similar) just to make totals match.
         - pfEmployeeContribution (if present)
         - pfEmployerContribution (if present)
         - professionalTaxAmount (if present)
@@ -725,7 +729,6 @@ function buildRcuTriggerPrompt(
     ${JSON.stringify(extractedData)}
 
     Evaluate EVERY trigger below against the document.
-    Do not skip any trigger.
     Do not invent extra triggers.
 
     Triggers:
@@ -743,9 +746,12 @@ function buildRcuTriggerPrompt(
     }
 
     Rules:
-    - status must be "passed" or "failed"
-    - message must explain why it passed or failed
-    - If the document does not contain enough evidence, mark it "failed"
+    - status must be one of: "passed", "failed", "skipped"
+    - "passed" = check could be evaluated and no risk finding
+    - "failed" = check could be evaluated and risk finding exists
+    - "skipped" = not possible to run on this document (wrong doc type, field not visible, or insufficient evidence)
+    - message must explain why it passed, failed, or was skipped
+    - Prefer "skipped" over "failed" when the trigger simply cannot be applied to this upload
   `;
 }
 
@@ -788,7 +794,7 @@ export interface StructuredExtractionResult {
   rawText: string;
   triggerResults?: Array<{
     code: string;
-    status: "passed" | "failed";
+    status: "passed" | "failed" | "skipped";
     message: string;
   }>;
 }
@@ -944,8 +950,11 @@ export async function extractStructuredDataFromDocument(
 function parseTriggerResults(
   raw: unknown,
   rcuTriggers?: Array<{ code: string; text: string; risk?: string; section?: string | null }>
-): Array<{ code: string; status: "passed" | "failed"; message: string }> {
-  const byCode = new Map<string, { code: string; status: "passed" | "failed"; message: string }>();
+): Array<{ code: string; status: "passed" | "failed" | "skipped"; message: string }> {
+  const byCode = new Map<
+    string,
+    { code: string; status: "passed" | "failed" | "skipped"; message: string }
+  >();
 
   if (Array.isArray(raw)) {
     for (const item of raw) {
@@ -954,7 +963,17 @@ function parseTriggerResults(
       const code = String(rec.code ?? rec.field ?? "").trim();
       if (!code) continue;
       const statusRaw = String(rec.status ?? "").toLowerCase();
-      const status: "passed" | "failed" = statusRaw === "passed" ? "passed" : "failed";
+      let status: "passed" | "failed" | "skipped" = "failed";
+      if (statusRaw === "passed" || statusRaw === "genuine") status = "passed";
+      else if (
+        statusRaw === "skipped" ||
+        statusRaw === "skip" ||
+        statusRaw === "n/a" ||
+        statusRaw === "na" ||
+        statusRaw === "not_applicable"
+      ) {
+        status = "skipped";
+      }
       byCode.set(code, {
         code,
         status,
@@ -972,8 +991,8 @@ function parseTriggerResults(
     if (found) return found;
     return {
       code: t.code,
-      status: "failed" as const,
-      message: "Trigger was not evaluated from the document",
+      status: "skipped" as const,
+      message: "Skip — trigger could not be evaluated on this document",
     };
   });
 }

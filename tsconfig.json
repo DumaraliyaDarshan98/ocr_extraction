@@ -5,8 +5,8 @@
     "rootDir": "./src",
 
     // Environment Settings
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "Node16",
+    "moduleResolution": "Node16",
     "target": "es2019",
     "lib": ["es2019"],
     "types": ["node"],

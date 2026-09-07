@@ -14,7 +14,7 @@ export interface KycCheck {
 export interface TriggerResultItem {
   field: string;
   triggerType: string;
-  status: "passed" | "failed";
+  status: "passed" | "failed" | "skipped";
   message: string;
   text?: string;
 }
@@ -24,7 +24,7 @@ export interface ForensicSignalItem {
   threatCode: string;
   severity: "low" | "medium" | "high";
   score: number;
-  status: "passed" | "failed" | "info";
+  status: "passed" | "failed" | "info" | "skipped";
   title: string;
   description: string;
   evidence?: Record<string, unknown>;

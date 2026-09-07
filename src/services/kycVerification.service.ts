@@ -37,6 +37,22 @@ export interface KycRunOptions {
     risk?: string;
     section?: string | null;
   }>;
+  /** Super-admin forensic catalog overlays (null/omit = hardcoded defaults). */
+  forensicConfigs?: Array<{
+    code: string;
+    engineKey?: string;
+    threatCode?: string;
+    title?: string;
+    description?: string;
+    severity?: "low" | "medium" | "high";
+    score?: number;
+    category?: string;
+    documentTypePattern?: string | null;
+  }> | null;
+  /** Detected upload file category: PDF | IMAGE | DOC | ZIP */
+  fileCategory?: "PDF" | "IMAGE" | "DOC" | "ZIP";
+  /** Original upload filename (temp disk paths often have no extension). */
+  originalFileName?: string;
 }
 
 function pickFirstString(
@@ -599,9 +615,14 @@ export async function runKycVerification(
     const forensics = runDocumentForensics({
       filePath: options.documentPath,
       ...(options.documentMimeType ? { mimeType: options.documentMimeType } : {}),
+      ...(options.originalFileName ? { originalFileName: options.originalFileName } : {}),
       documentType: normalizedType,
       extractedData: extracted.data,
       triggerResults,
+      ...(options.forensicConfigs != null
+        ? { forensicConfigs: options.forensicConfigs }
+        : {}),
+      ...(options.fileCategory ? { fileCategory: options.fileCategory } : {}),
     });
 
     return {

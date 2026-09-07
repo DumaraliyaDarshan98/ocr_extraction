@@ -91,6 +91,76 @@ export const verifyDocument = async (req: Request, res: Response) => {
       }
     }
 
+    let forensicConfigs: Array<{
+      code: string;
+      engineKey?: string;
+      threatCode?: string;
+      title?: string;
+      description?: string;
+      severity?: "low" | "medium" | "high";
+      score?: number;
+      category?: string;
+      documentTypePattern?: string | null;
+    }> | null = null;
+    if (req.body?.forensicConfigs !== undefined && req.body?.forensicConfigs !== "") {
+      try {
+        const parsed =
+          typeof req.body.forensicConfigs === "string"
+            ? JSON.parse(req.body.forensicConfigs)
+            : req.body.forensicConfigs;
+        if (Array.isArray(parsed)) {
+          forensicConfigs = parsed
+            .filter((c) => c && typeof c === "object" && c.code)
+            .map((c) => {
+              const item: {
+                code: string;
+                engineKey?: string;
+                threatCode?: string;
+                title?: string;
+                description?: string;
+                severity?: "low" | "medium" | "high";
+                score?: number;
+                category?: string;
+                documentTypePattern?: string | null;
+              } = {
+                code: String(c.code ?? "").trim(),
+              };
+              if (c.engineKey) item.engineKey = String(c.engineKey);
+              if (c.threatCode) item.threatCode = String(c.threatCode);
+              if (c.title) item.title = String(c.title);
+              if (c.description) item.description = String(c.description);
+              if (c.category) item.category = String(c.category);
+              if (c.severity === "low" || c.severity === "medium" || c.severity === "high") {
+                item.severity = c.severity;
+              }
+              if (typeof c.score === "number" && Number.isFinite(c.score)) {
+                item.score = c.score;
+              }
+              if (c.documentTypePattern != null) {
+                item.documentTypePattern = String(c.documentTypePattern);
+              }
+              return item;
+            });
+        } else {
+          forensicConfigs = [];
+        }
+      } catch (parseErr) {
+        console.warn("[OCR:VERIFY] forensicConfigs JSON parse failed", parseErr);
+        forensicConfigs = null;
+      }
+    }
+
+    const rawFileCategory = String(req.body?.fileCategory ?? "")
+      .trim()
+      .toUpperCase();
+    const fileCategory =
+      rawFileCategory === "PDF" ||
+      rawFileCategory === "IMAGE" ||
+      rawFileCategory === "DOC" ||
+      rawFileCategory === "ZIP"
+        ? rawFileCategory
+        : undefined;
+
     if (!filePath) {
       console.error("[OCR:VERIFY] FAIL File missing (field: file)");
       return badRequest(res, "File missing (field: file)");
@@ -100,7 +170,9 @@ export const verifyDocument = async (req: Request, res: Response) => {
       return badRequest(res, "documentType is required");
     }
 
-    console.log(`[OCR:VERIFY] triggers loaded count=${rcuTriggers.length}`);
+    console.log(
+      `[OCR:VERIFY] triggers loaded count=${rcuTriggers.length} forensics=${forensicConfigs == null ? "defaults" : forensicConfigs.length} fileCategory=${fileCategory ?? "auto"}`
+    );
 
     const result = await runKycVerification({
       documentType,
@@ -110,6 +182,11 @@ export const verifyDocument = async (req: Request, res: Response) => {
       expectedName,
       requireDob,
       ...(useRcuTriggers || rcuTriggers.length ? { rcuTriggers } : {}),
+      ...(forensicConfigs != null ? { forensicConfigs } : {}),
+      ...(fileCategory ? { fileCategory } : {}),
+      ...(primaryFile?.originalname
+        ? { originalFileName: String(primaryFile.originalname) }
+        : {}),
     });
 
     console.log(

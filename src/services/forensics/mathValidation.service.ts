@@ -15,31 +15,71 @@ function parseAmount(raw: unknown): number | null {
     .replace(/[, ]/g, "")
     .replace(/[₹$]/g, "")
     .replace(/[^\d.-]/g, "");
-  if (!s) return null;
+  if (!s || s === "-" || s === "." || s === "-.") return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
-function sumLineItems(items: unknown): number | null {
+/** Prefer amount, else current+arrears (common payslip columns). */
+function lineItemAmount(rec: Record<string, unknown>): number | null {
+  const direct =
+    parseAmount(rec.amount) ??
+    parseAmount(rec.value) ??
+    parseAmount(rec.total) ??
+    parseAmount(rec.debit) ??
+    parseAmount(rec.credit);
+  if (direct != null) return direct;
+
+  const current = parseAmount(rec.current);
+  const arrears = parseAmount(rec.arrears);
+  if (current != null && arrears != null) return current + arrears;
+  if (current != null) return current;
+  if (arrears != null) return arrears;
+  return null;
+}
+
+function sumLineItems(items: unknown): {
+  sum: number | null;
+  counted: number;
+  blankNamed: string[];
+  namedCount: number;
+} {
   const arr = unwrap(items);
-  if (!Array.isArray(arr) || !arr.length) return null;
+  if (!Array.isArray(arr) || !arr.length) {
+    return { sum: null, counted: 0, blankNamed: [], namedCount: 0 };
+  }
   let total = 0;
   let counted = 0;
+  const blankNamed: string[] = [];
+  let namedCount = 0;
+
   for (const item of arr) {
     const obj = unwrap(item);
     if (!obj || typeof obj !== "object") continue;
     const rec = obj as Record<string, unknown>;
-    const amount =
-      parseAmount(rec.amount) ??
-      parseAmount(rec.value) ??
-      parseAmount(rec.total) ??
-      parseAmount(rec.debit) ??
-      parseAmount(rec.credit);
-    if (amount == null) continue;
+    const name = String(unwrap(rec.name) ?? unwrap(rec.label) ?? "")
+      .trim()
+      .toLowerCase();
+    if (name) namedCount++;
+
+    // Skip total/subtotal rows inside the array so we don't double-count.
+    if (/^total\b|grand\s*total|net\s*pay/.test(name)) continue;
+
+    const amount = lineItemAmount(rec);
+    if (amount == null) {
+      if (name) blankNamed.push(String(unwrap(rec.name) ?? unwrap(rec.label) ?? "").trim());
+      continue;
+    }
     total += amount;
     counted++;
   }
-  return counted ? total : null;
+
+  return {
+    sum: counted ? total : null,
+    counted,
+    blankNamed,
+    namedCount,
+  };
 }
 
 function nearlyEqual(a: number, b: number, tol = 1.0): boolean {
@@ -57,8 +97,47 @@ function pickField(data: Record<string, unknown>, keys: string[]): unknown {
   return undefined;
 }
 
+function sumNamedSalaryComponents(data: Record<string, unknown>): number | null {
+  const parts = [
+    parseAmount(pickField(data, ["basicSalary", "basic", "basicPay"])),
+    parseAmount(pickField(data, ["hra", "houseRentAllowance"])),
+    parseAmount(pickField(data, ["specialAllowance"])),
+    parseAmount(pickField(data, ["conveyanceAllowance", "conveyance"])),
+    parseAmount(pickField(data, ["otherAllowances", "otherAllowance"])),
+  ].filter((n): n is number => n != null);
+  if (!parts.length) return null;
+  return parts.reduce((a, b) => a + b, 0);
+}
+
+function hasSalaryShape(data: Record<string, unknown>): boolean {
+  return (
+    pickField(data, [
+      "earnings",
+      "earning",
+      "totalEarnings",
+      "grossSalary",
+      "netSalary",
+      "netPay",
+      "basicSalary",
+      "salaryAmountFigures",
+    ]) != null
+  );
+}
+
+function hasBankShape(data: Record<string, unknown>): boolean {
+  return (
+    pickField(data, [
+      "openingBalance",
+      "closingBalance",
+      "totalCredits",
+      "totalDebits",
+    ]) != null
+  );
+}
+
 /**
- * Business/math consistency checks (T041–T043).
+ * Business/math + payslip layout consistency checks (T041–T044).
+ * Runs when document type looks like salary/bank OR extracted fields look like them.
  */
 export function analyzeMathRules(
   documentType: string,
@@ -75,12 +154,25 @@ export function analyzeMathRules(
   const dt = (documentType || "").toLowerCase();
   const signals: ForensicSignal[] = [];
 
-  if (/salary|payslip|pay slip/.test(dt)) {
-    const earningsSum = sumLineItems(pickField(data, ["earnings", "earning"]));
-    const deductionsSum = sumLineItems(pickField(data, ["deductions", "deduction"]));
+  const isSalaryDoc =
+    /salary|payslip|pay[\s_-]?slip|wage/.test(dt) || hasSalaryShape(data);
+  const isBankDoc =
+    /bank|statement|account\s*statement/.test(dt) || hasBankShape(data);
+
+  if (isSalaryDoc) {
+    const earningsMeta = sumLineItems(pickField(data, ["earnings", "earning"]));
+    const deductionsMeta = sumLineItems(pickField(data, ["deductions", "deduction"]));
+    const namedComponentsSum = sumNamedSalaryComponents(data);
+
+    const earningsSum =
+      earningsMeta.sum != null
+        ? earningsMeta.sum
+        : namedComponentsSum;
+
     const totalEarnings =
-      parseAmount(pickField(data, ["totalEarnings", "grossSalary", "grossPay", "totalEarning"])) ??
-      null;
+      parseAmount(
+        pickField(data, ["totalEarnings", "grossSalary", "grossPay", "totalEarning"])
+      ) ?? null;
     const totalDeductions =
       parseAmount(pickField(data, ["totalDeductions", "totalDeduction"])) ?? null;
     const net =
@@ -88,9 +180,36 @@ export function analyzeMathRules(
         pickField(data, ["netSalary", "netPay", "salaryAmountFigures", "takeHome"])
       ) ?? null;
     const gross =
-      parseAmount(pickField(data, ["grossSalary", "totalEarnings", "grossPay"])) ?? totalEarnings;
+      parseAmount(pickField(data, ["grossSalary", "totalEarnings", "grossPay"])) ??
+      totalEarnings;
 
-    if (earningsSum != null && totalEarnings != null && !nearlyEqual(earningsSum, totalEarnings, 2)) {
+    // Blank earning rows (e.g. Special Allowance removed) while a total exists.
+    if (earningsMeta.blankNamed.length && totalEarnings != null) {
+      signals.push({
+        code: "SALARY_LAYOUT_ALIGNMENT",
+        threatCode: "T044",
+        severity: "high",
+        score: 18,
+        status: "failed",
+        title: "Payslip layout / amount gap",
+        description: `Earning line(s) have missing amounts (${earningsMeta.blankNamed.join(
+          ", "
+        )}) while Total Earnings is ${totalEarnings.toFixed(
+          2
+        )} — possible edit, font/alignment, or tampering.`,
+        evidence: {
+          blankNamed: earningsMeta.blankNamed,
+          totalEarnings,
+          earningsSum: earningsMeta.sum,
+        },
+      });
+    }
+
+    if (
+      earningsSum != null &&
+      totalEarnings != null &&
+      !nearlyEqual(earningsSum, totalEarnings, 2)
+    ) {
       signals.push({
         code: "SALARY_EARNINGS_MISMATCH",
         threatCode: "T043",
@@ -98,15 +217,22 @@ export function analyzeMathRules(
         score: 20,
         status: "failed",
         title: "Earnings total mismatch",
-        description: `Sum of earnings line items (${earningsSum.toFixed(2)}) does not match total earnings (${totalEarnings.toFixed(2)}).`,
-        evidence: { earningsSum, totalEarnings },
+        description: `Sum of earnings line items (${earningsSum.toFixed(
+          2
+        )}) does not match total earnings (${totalEarnings.toFixed(2)}).`,
+        evidence: {
+          earningsSum,
+          totalEarnings,
+          blankNamed: earningsMeta.blankNamed,
+          counted: earningsMeta.counted,
+        },
       });
     }
 
     if (
-      deductionsSum != null &&
+      deductionsMeta.sum != null &&
       totalDeductions != null &&
-      !nearlyEqual(deductionsSum, totalDeductions, 2)
+      !nearlyEqual(deductionsMeta.sum, totalDeductions, 2)
     ) {
       signals.push({
         code: "SALARY_DEDUCTIONS_MISMATCH",
@@ -115,8 +241,13 @@ export function analyzeMathRules(
         score: 20,
         status: "failed",
         title: "Deductions total mismatch",
-        description: `Sum of deduction line items (${deductionsSum.toFixed(2)}) does not match total deductions (${totalDeductions.toFixed(2)}).`,
-        evidence: { deductionsSum, totalDeductions },
+        description: `Sum of deduction line items (${deductionsMeta.sum.toFixed(
+          2
+        )}) does not match total deductions (${totalDeductions.toFixed(2)}).`,
+        evidence: {
+          deductionsSum: deductionsMeta.sum,
+          totalDeductions,
+        },
       });
     }
 
@@ -130,10 +261,12 @@ export function analyzeMathRules(
           score: 22,
           status: "failed",
           title: "Net salary math mismatch",
-          description: `Gross (${gross.toFixed(2)}) − deductions (${totalDeductions.toFixed(2)}) = ${expected.toFixed(2)}, but net is ${net.toFixed(2)}.`,
+          description: `Gross (${gross.toFixed(2)}) − deductions (${totalDeductions.toFixed(
+            2
+          )}) = ${expected.toFixed(2)}, but net is ${net.toFixed(2)}.`,
           evidence: { gross, totalDeductions, expectedNet: expected, net },
         });
-      } else {
+      } else if (!signals.some((s) => s.status === "failed")) {
         signals.push({
           code: "SALARY_MATH_OK",
           threatCode: "T041",
@@ -158,7 +291,7 @@ export function analyzeMathRules(
     }
   }
 
-  if (/bank|statement|account statement/.test(dt)) {
+  if (isBankDoc) {
     const opening = parseAmount(
       pickField(data, ["openingBalance", "opening", "previousBalance"])
     );
@@ -178,7 +311,9 @@ export function analyzeMathRules(
           score: 22,
           status: "failed",
           title: "Bank balance mismatch",
-          description: `Opening + credits − debits = ${expected.toFixed(2)}, but closing balance is ${closing.toFixed(2)}.`,
+          description: `Opening + credits − debits = ${expected.toFixed(
+            2
+          )}, but closing balance is ${closing.toFixed(2)}.`,
           evidence: { opening, credits, debits, expectedClosing: expected, closing },
         });
       } else {
