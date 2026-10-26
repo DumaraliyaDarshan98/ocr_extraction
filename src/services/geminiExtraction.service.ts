@@ -634,6 +634,91 @@ function getTypeSpecificPrompt(documentTypeHint: string): string {
       - businessAddress
       `,
     },
+    {
+      matches: ["address proof", "address-proof", "utility bill", "electricity bill", "gas bill"],
+      prompt: `
+        Address Proof extraction:
+        - documentSubType (utility_bill / ration_card / rent_agreement / other)
+        - fullName
+        - addressLine1
+        - addressLine2
+        - landmark
+        - city
+        - state
+        - pincode
+        - issueDate / billDate
+        - accountOrConsumerNumber (if present)
+        - issuerName (utility / authority)
+        - ownershipOrOccupancy (owner / tenant / unknown)
+
+        Validation:
+        - addressComplete (true/false)
+        - pincodeValid (true/false if 6 digits visible)
+        - nameAvailable (true/false)
+
+        Tampering:
+        - tamperingDetected
+        - tamperingType
+      `,
+    },
+    {
+      matches: ["agreement", "rent agreement", "leave and license", "lease"],
+      prompt: `
+        Agreement / Lease extraction:
+        - agreementType (rent / leave_and_license / sale / other)
+        - partyOneName (landlord / lessor / seller)
+        - partyTwoName (tenant / lessee / buyer)
+        - propertyAddress
+        - city
+        - state
+        - pincode
+        - agreementStartDate
+        - agreementEndDate
+        - monthlyRentOrConsideration
+        - depositAmount (if present)
+        - stampPaperNumber (if present)
+        - registrationNumber (if present)
+        - witnessNames (array if visible)
+
+        Validation:
+        - bothPartiesPresent
+        - addressPresent
+        - datesPresent
+
+        Tampering:
+        - tamperingDetected
+        - tamperingType
+      `,
+    },
+    {
+      matches: ["ownership deed", "sale deed", "title deed", "property deed", "deed"],
+      prompt: `
+        Ownership / Sale Deed extraction:
+        - deedType (sale_deed / gift_deed / title_deed / other)
+        - ownerName / purchaserName
+        - sellerName (if sale)
+        - propertyDescription
+        - propertyAddress
+        - surveyOrPlotNumber
+        - city
+        - state
+        - pincode
+        - considerationAmount
+        - registrationDate
+        - registrationNumber
+        - registrarOffice
+        - stampDutyAmount (if present)
+
+        Validation:
+        - ownerNamePresent
+        - propertyIdentityPresent
+        - registrationDetailsPresent
+
+        Tampering:
+        - tamperingDetected
+        - tamperingType
+      `,
+    },
   ];
 
   const match = promptByType.find((entry) =>

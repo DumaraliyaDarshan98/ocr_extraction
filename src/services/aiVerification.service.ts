@@ -14,9 +14,16 @@ export interface AiAnalysisResult {
   authenticityScore: number;
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let openaiClient: OpenAI | null = null;
+
+function getOpenAI(): OpenAI | null {
+  const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
+  if (!apiKey) return null;
+  if (!openaiClient) {
+    openaiClient = new OpenAI({ apiKey });
+  }
+  return openaiClient;
+}
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
@@ -63,8 +70,8 @@ Output rules (mandatory):
 export const analyzeDocumentWithOpenAI = async (
   filePath: string
 ): Promise<AiAnalysisResult | null> => {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  const openai = getOpenAI();
+  if (!openai) {
     return null;
   }
 
