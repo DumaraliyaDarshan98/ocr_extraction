@@ -80,8 +80,9 @@ export const detectKeywords = (type: string, text: string) => {
         ],
         form_16: [
             "form 16",
-            "tan",
-            "tax deduction",
+            "form16",
+            "tds certificate",
+            "tax deduction at source",
             "deduction & collection"
         ],
         trade_license: [
@@ -89,6 +90,25 @@ export const detectKeywords = (type: string, text: string) => {
             "trade licence",
             "municipal",
             "authority"
+        ],
+        udyam_certificate: [
+            "udyam",
+            "udyog aadhaar",
+            "msme",
+            "ministry of micro"
+        ],
+        leaving_certificate: [
+            "leaving certificate",
+            "date of leaving",
+            "reason for leaving",
+            "last school attended"
+        ],
+        marksheet: [
+            "statement of marks",
+            "marksheet",
+            "mark sheet",
+            "education board",
+            "percentile"
         ]
     };
 

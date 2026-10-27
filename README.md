@@ -49,7 +49,7 @@ All `/api/document/*` routes require API key (when configured) + rate limit.
 
 ### Document types (identify allow-list)
 
-PAN, Aadhaar, Voter Card, Driving License, Passport, Salary Slip, Form 16, Bank Statement, ITR, GST, Trade License, Address Proof, Agreement, Ownership Deed, Other.
+PAN, Aadhaar, Voter Card, Driving License, Passport, Salary Slip, Form 16, Bank Statement, ITR, GST, Trade License, Udyam Certificate, Leaving Certificate, Marksheet, Address Proof, Agreement, Ownership Deed, Other.
 
 ### Verify modes
 

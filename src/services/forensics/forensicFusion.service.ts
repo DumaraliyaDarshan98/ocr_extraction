@@ -58,6 +58,7 @@ export function fuseForensicVerdict(
   const tamperCodes = new Set([
     "VISUAL_TAMPER_DETECTED",
     "IMAGE_ELA_ANOMALY",
+    "IMAGE_MARK_OVERLAY",
     "IMAGE_EDITOR_SIGNATURE",
     "IMAGE_EDITOR_METADATA",
     "PDF_ANNOTATIONS_PRESENT",

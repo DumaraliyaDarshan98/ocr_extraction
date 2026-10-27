@@ -11,10 +11,11 @@ const MAX_REQ = Number(process.env.OCR_RATE_LIMIT_MAX || 60);
  * Simple in-memory rate limiter (per IP). Fine for a single OCR instance.
  */
 export function rateLimit(req: Request, res: Response, next: NextFunction): void {
+  const forwarded = String(req.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    ?.trim();
   const key =
-    String(req.headers["x-forwarded-for"] || "")
-      .split(",")[0]
-      .trim() ||
+    forwarded ||
     req.ip ||
     req.socket?.remoteAddress ||
     "unknown";

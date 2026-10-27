@@ -5,8 +5,38 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import "dotenv/config";
 import { parseJsonObjectFromModelText } from "../utils/jsonExtract.util";
 import { normalizeExtractedPayload } from "../utils/extractionNormalize.util";
+import {
+  classifyDocumentLocally,
+  correctMisclassifiedType,
+  fuseDocumentTypes,
+  hasGeminiApiKey,
+} from "./documentClassify.service";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+function resolveGeminiApiKey(): string {
+  return String(
+    process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "",
+  ).trim();
+}
+
+function getGeminiClient() {
+  const key = resolveGeminiApiKey();
+  if (!key) {
+    const err: any = new Error(
+      "GEMINI_API_KEY is missing. Set GEMINI_API_KEY (or GOOGLE_API_KEY) in ocr_extraction/.env",
+    );
+    err.status = 401;
+    err.code = "GEMINI_API_KEY_MISSING";
+    throw err;
+  }
+  // Log once per process so ops can spot placeholder / truncated keys.
+  if (!(globalThis as any).__ocrGeminiKeyLogged) {
+    (globalThis as any).__ocrGeminiKeyLogged = true;
+    console.log(
+      `[ocr] Gemini key loaded len=${key.length} prefix=${key.slice(0, 4)}…`,
+    );
+  }
+  return new GoogleGenerativeAI(key);
+}
 
 /* ---------------- IMAGE FIX (WEBP ISSUE) ---------------- */
 async function prepareImage(filePath: string): Promise<string> {
@@ -102,16 +132,23 @@ function getTypeSpecificPrompt(documentTypeHint: string): string {
         Security:
         - qrReadable
 
-        Tampering:
-        - tamperingDetected
-        - tamperingType
+        Tampering (STRICT — look carefully at the whole card):
+        - tamperingDetected (true/false)
+        - tamperingType (array or null)
 
         Possible tamperingType:
-        - photo_pasted, text_overwrite, font_mismatch, blurred_text,
-          qr_missing_or_fake, alignment_issue
+        - handwritten_mark, highlighter_or_scribble, annotation_overlay,
+          photo_pasted, text_overwrite, font_mismatch, blurred_text,
+          qr_missing_or_fake, alignment_issue, whiteout_or_cover,
+          text_removed_or_erased, cropped_or_cut
 
         Rules:
-        - do not assume missing QR = tampering
+        - Do NOT assume missing QR = tampering
+        - Drawn circles, ellipses, arrows, ticks, crosses, pen strokes, or digital markup
+          on/near name, DOB, photo, gender, or UID → tamperingDetected=true
+          (use handwritten_mark and/or annotation_overlay)
+        - Even small blue/red/black marks or rings around text count as tampering
+        - Clean card with no added marks → tamperingDetected=false, tamperingType=null
       `
     },
     {
@@ -602,6 +639,60 @@ function getTypeSpecificPrompt(documentTypeHint: string): string {
       `,
     },
     {
+      matches: ["udyam", "udyog", "msme"],
+      prompt: `
+        Udyam Certificate extraction:
+        - udyamRegistrationNumber
+        - enterpriseName
+        - ownerName
+        - organisationType
+        - majorActivity
+        - socialCategory
+        - gender
+        - dateOfRegistration
+        - district
+        - state
+      `,
+    },
+    {
+      matches: ["leaving certificate", "leaving", "school leaving", "transfer certificate"],
+      prompt: `
+        Leaving Certificate extraction:
+        - fullName
+        - religionCaste
+        - placeOfBirth
+        - dateOfBirth
+        - lastSchoolAttended
+        - dateOfAdmission
+        - dateOfLeaving
+        - standardStudying
+        - reasonForLeaving
+        - progress
+        - conduct
+        - schoolName
+        - lcNumber
+        - grNumber
+      `,
+    },
+    {
+      matches: ["marksheet", "mark sheet", "statement of marks"],
+      prompt: `
+        Marksheet / Statement of Marks extraction:
+        - candidateName
+        - seatNumber
+        - examinationName
+        - monthYear
+        - stream
+        - subjects (array of { name, marksObtained, totalMarks, grade })
+        - totalMarks
+        - marksObtained
+        - overallGrade
+        - percentile
+        - boardName
+        - result
+      `,
+    },
+    {
       matches: ["financial"],
       prompt: `
         Financial Document extraction:
@@ -793,13 +884,14 @@ function buildStructuredExtractionPrompt(documentTypeHint: string): string {
     - Low → below 0.5
 
     ALWAYS include these forensic fields (all document types):
-    - tamperingDetected (true/false) — true if you see marks, scribbles, highlighter, white-out/cover strips, erased or overwritten text, pasted photo/text blocks, blur patches, stamps covering data, or cropped/cut content
+    - tamperingDetected (true/false) — true if you see marks, scribbles, highlighter, drawn circles/ellipses/arrows, white-out/cover strips, erased or overwritten text, pasted photo/text blocks, blur patches, stamps covering data, or cropped/cut content
     - tamperingType (array of strings, or null if none)
       Allowed values: whiteout_or_cover, handwritten_mark, highlighter_or_scribble, text_removed_or_erased, text_overwrite, stamp_or_seal_cover, photo_pasted, font_mismatch, blur_or_pixelation, annotation_overlay, cropped_or_cut
     Rules for tampering:
-    - Do NOT guess. If unsure → tamperingDetected=false and tamperingType=null
+    - Drawn circles, rings, arrows, ticks, crosses, pen strokes, highlighter, or digital markup on the document → ALWAYS tamperingDetected=true (handwritten_mark and/or annotation_overlay). Do not ignore small marks near names/DOB/photo/ID numbers.
     - If any clear edit/mark/cover/removal → tamperingDetected=true and list all matching types
-    - Clean original scan/photo with no edits → tamperingDetected=false, tamperingType=null
+    - Only when the document looks clean with no added marks/edits → tamperingDetected=false and tamperingType=null
+    - Do NOT invent tampering that is not visible; but do NOT miss obvious pen/annotation overlays
 
     Mandatory:
     - documentType
@@ -909,16 +1001,42 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function isAuthGeminiError(err: any): boolean {
+  const status = Number(err?.status);
+  if (status === 401 || status === 403) return true;
+  const msg = String(err?.message || err || "").toLowerCase();
+  return (
+    err?.code === "GEMINI_API_KEY_MISSING" ||
+    msg.includes("api key") ||
+    msg.includes("unregistered callers") ||
+    msg.includes("permission denied")
+  );
+}
+
 function isRetriableGeminiError(err: any): boolean {
-  return [429, 500, 502, 503, 504].includes(err?.status);
+  const status = Number(err?.status);
+  if ([429, 500, 502, 503, 504].includes(status)) return true;
+  const msg = String(err?.message || err || "").toLowerCase();
+  return (
+    msg.includes("abort") ||
+    msg.includes("timeout") ||
+    msg.includes("econnreset") ||
+    msg.includes("fetch failed") ||
+    msg.includes("network")
+  );
 }
 
 /* ---------------- MODEL ---------------- */
 function getFallbackModelNames(): string[] {
-  return [
+  const preferred = String(process.env.GEMINI_MODEL || "").trim();
+  const models = [
+    preferred || "gemini-2.5-flash",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite" // safer backup if available
-  ];
+    "gemini-2.0-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-1.5-flash",
+  ].filter(Boolean);
+  return [...new Set(models)];
 }
 
 /* ---------------- GEMINI CALL ---------------- */
@@ -930,6 +1048,16 @@ async function generateContentWithRetryAndFallback(args: {
 }): Promise<string> {
   const { modelNames, prompt, mimeType, base64Image } = args;
 
+  if (!hasGeminiApiKey()) {
+    const err: any = new Error(
+      "GEMINI_API_KEY is missing. Set GEMINI_API_KEY in ocr_extraction/.env",
+    );
+    err.status = 401;
+    err.code = "GEMINI_API_KEY_MISSING";
+    throw err;
+  }
+
+  const genAI = getGeminiClient();
   let lastError: any = null;
 
   for (const modelName of modelNames) {
@@ -940,8 +1068,9 @@ async function generateContentWithRetryAndFallback(args: {
       try {
         console.log(`Model: ${modelName}, Attempt: ${attempt}`);
 
-        const controller = new AbortController();
-        timeout = setTimeout(() => controller.abort(), 15000);
+        timeout = setTimeout(() => {
+          /* soft timeout logged only — SDK has its own network timeout */
+        }, 45000);
 
         const result = await model.generateContent([
           prompt,
@@ -955,31 +1084,30 @@ async function generateContentWithRetryAndFallback(args: {
         if (timeout) clearTimeout(timeout);
 
         lastError = err;
-
         console.log("Error:", err?.status || err?.message);
 
-        // ❌ DO NOT retry for non-retriable errors
-        if (!isRetriableGeminiError(err)) {
+        // Auth / missing key: do not burn retries on other models with same key.
+        if (isAuthGeminiError(err)) {
           throw err;
         }
 
-        // ⏳ exponential backoff (important)
-        const delay = Math.min(4000, 500 * Math.pow(2, attempt));
+        if (!isRetriableGeminiError(err)) {
+          // Non-auth, non-retriable (e.g. bad request) → try next model.
+          console.log(`Non-retriable for ${modelName}, trying next model…`);
+          break;
+        }
+
+        const delay = Math.min(6000, 600 * Math.pow(2, attempt));
         console.log(`Retrying after ${delay}ms...`);
         await sleep(delay);
       }
     }
   }
 
-  // ✅ FINAL FALLBACK (VERY IMPORTANT)
-  console.log("⚠️ Gemini failed completely, returning fallback response");
+  console.log("⚠️ Gemini failed completely after retries/models");
+  if (lastError) throw lastError;
 
-  return JSON.stringify({
-    documentType: "unknown",
-    otherDetails: {
-      error: "Gemini unavailable (503)",
-    },
-  });
+  throw new Error("Gemini unavailable after retries");
 }
 
 /* ---------------- MAIN FUNCTION ---------------- */
@@ -1115,57 +1243,190 @@ const KNOWN_DOCUMENT_TYPES = [
   "ITR",
   "GST",
   "Trade License",
+  "Udyam Certificate",
+  "Leaving Certificate",
+  "Marksheet",
   "Address Proof",
   "Agreement",
   "Ownership Deed",
   "Other",
 ];
 
-/**
- * Lightweight classification: detect document type without full field extraction.
- */
-export async function identifyDocumentTypeFromFile(
-  filePath: string,
-  mimeTypeHint?: string
+export type IdentifyDocumentResult = {
+  documentType: string;
+  confidence: number;
+  source: string;
+  message?: string;
+  localEvidence?: string[];
+};
+
+async function identifyWithGemini(
+  absolutePath: string,
+  mimeTypeHint?: string,
 ): Promise<{ documentType: string; confidence: number } | null> {
-  try {
-    let absolutePath = path.resolve(filePath);
-    absolutePath = await prepareImage(absolutePath);
+  const imageBuffer = await fs.promises.readFile(absolutePath);
+  const base64Image = imageBuffer.toString("base64");
+  const mimeType = getMimeType(absolutePath, mimeTypeHint);
 
-    const imageBuffer = await fs.promises.readFile(absolutePath);
-    const base64Image = imageBuffer.toString("base64");
-    const mimeType = getMimeType(absolutePath, mimeTypeHint);
+  const prompt = `
+You are an expert Indian KYC / financial / education document verifier.
 
-    const prompt = `
-Identify the Indian KYC / financial document type from this file.
+Identify the document type from this image/file.
 
 Return ONLY valid minified JSON:
 {"documentType":"","confidence":0}
 
 Rules:
 - documentType must be one of: ${KNOWN_DOCUMENT_TYPES.join(", ")}
-- If unsure, use "Other"
+- Aadhaar (UIDAI / 12-digit UID / "आधार") → "Aadhaar" (NOT Other)
+- PAN card → "PAN"
+- School "LEAVING CERTIFICATE" / LC / Transfer Certificate → "Leaving Certificate"
+  (NOT Form 16, NOT TDS, NOT Other)
+- Board "Statement of Marks" / Marksheet / HSC-SSC result → "Marksheet"
+  (NOT Form 16, NOT TDS Certificate, NOT Bank Statement)
+- Udyam / Udyog Aadhaar / MSME registration certificate → "Udyam Certificate"
+  (NOT Driving License, NOT Trade License)
+- Driving License only if it clearly says Driving Licence/License (RTO / transport)
+- Form 16 only for employer TDS Form 16 / section 203 tax deduction certificate
+  (never school certificates or marksheets)
+- Prefer the most specific type; use "Other" only when clearly none of the list
 - confidence is 0 to 1
 - No markdown, no explanation
 `;
 
-    const rawText = await generateContentWithRetryAndFallback({
-      modelNames: getFallbackModelNames(),
-      prompt,
-      mimeType,
-      base64Image,
-    });
+  const rawText = await generateContentWithRetryAndFallback({
+    modelNames: getFallbackModelNames(),
+    prompt,
+    mimeType,
+    base64Image,
+  });
 
-    const parsed = parseJsonObjectFromModelText(rawText);
-    const documentType = String(parsed.documentType ?? "Other").trim() || "Other";
-    const confidenceRaw = Number(parsed.confidence);
-    const confidence = Number.isFinite(confidenceRaw)
-      ? Math.min(1, Math.max(0, confidenceRaw))
-      : 0.5;
+  const parsed = parseJsonObjectFromModelText(rawText);
+  const documentType = String(parsed.documentType ?? "Other").trim() || "Other";
+  const confidenceRaw = Number(parsed.confidence);
+  const confidence = Number.isFinite(confidenceRaw)
+    ? Math.min(1, Math.max(0, confidenceRaw))
+    : 0.5;
 
-    return { documentType, confidence };
-  } catch (err) {
-    console.log("identifyDocumentTypeFromFile failed:", err);
-    return null;
+  // Normalize common aliases from the model
+  const lower = documentType.toLowerCase();
+  if (/aadhaar|aadhar|uidai/.test(lower)) {
+    return { documentType: "Aadhaar", confidence: Math.max(confidence, 0.7) };
   }
+  if (/leaving|school\s*leaving|transfer\s*certificate|\blc\b/.test(lower)) {
+    return {
+      documentType: "Leaving Certificate",
+      confidence: Math.max(confidence, 0.75),
+    };
+  }
+  if (/mark\s*sheet|marksheet|statement\s*of\s*marks|hsc\s*result|ssc\s*result/.test(lower)) {
+    return { documentType: "Marksheet", confidence: Math.max(confidence, 0.75) };
+  }
+  if (/udyam|udyog\s*aadhaar|msme/.test(lower)) {
+    return {
+      documentType: "Udyam Certificate",
+      confidence: Math.max(confidence, 0.75),
+    };
+  }
+  if (/tds/.test(lower) && /form\s*16|certificate/.test(lower)) {
+    return { documentType: "Form 16", confidence: Math.max(confidence, 0.7) };
+  }
+
+  return { documentType, confidence };
 }
+
+/**
+ * Robust classification: Gemini (with retries/models) + local Tesseract/validators.
+ * Never silently collapses a clear Aadhaar/PAN to Other when local evidence is strong.
+ */
+export async function identifyDocumentTypeFromFile(
+  filePath: string,
+  mimeTypeHint?: string,
+): Promise<IdentifyDocumentResult | null> {
+  let absolutePath = path.resolve(filePath);
+  absolutePath = await prepareImage(absolutePath);
+
+  // Always run local classifier (works without Gemini; cross-checks AI).
+  const local = await classifyDocumentLocally(absolutePath, mimeTypeHint);
+
+  let ai: { documentType: string; confidence: number } | null = null;
+  let aiError: string | null = null;
+
+  if (hasGeminiApiKey()) {
+    // Up to 2 full identify passes (model-level retries are inside).
+    for (let pass = 1; pass <= 2; pass++) {
+      try {
+        console.log(`[OCR:IDENTIFY] Gemini pass ${pass}`);
+        ai = await identifyWithGemini(absolutePath, mimeTypeHint);
+        if (ai && ai.confidence >= 0.55 && ai.documentType.toLowerCase() !== "other") {
+          break;
+        }
+        // Low-confidence / Other → one more pass after short delay
+        if (pass < 2) await sleep(400);
+      } catch (err: any) {
+        aiError = err?.message || String(err);
+        console.log(
+          `[OCR:IDENTIFY] Gemini pass ${pass} failed:`,
+          err?.status || aiError,
+        );
+        if (isAuthGeminiError(err)) break;
+        if (pass < 2) await sleep(600);
+      }
+    }
+  } else {
+    aiError = "GEMINI_API_KEY missing";
+    console.warn(
+      "[OCR:IDENTIFY] GEMINI_API_KEY not set — using local OCR/validators only",
+    );
+  }
+
+  const fused = fuseDocumentTypes(ai, local);
+  const correctedType = correctMisclassifiedType(
+    fused.documentType,
+    local.ocrText || "",
+  );
+  const wasCorrected =
+    correctedType.toLowerCase() !== fused.documentType.toLowerCase();
+
+  if (
+    correctedType === "Other" &&
+    fused.confidence < 0.4 &&
+    !local.evidence.includes("empty_ocr")
+  ) {
+    // Last-chance: if Verhoeff Aadhaar number exists in OCR, force Aadhaar.
+    if (local.extractedData?.aadhaarNumber) {
+      return {
+        documentType: "Aadhaar",
+        confidence: Math.max(0.7, local.confidence),
+        source: "local_aadhaar_force",
+        message: aiError
+          ? `Gemini unavailable (${aiError}); classified via Aadhaar checksum`
+          : "Classified via Aadhaar checksum",
+        localEvidence: local.evidence,
+      };
+    }
+  }
+
+  const messageParts: string[] = [];
+  if (aiError) messageParts.push(`Gemini: ${aiError}`);
+  messageParts.push(`source=${wasCorrected ? "ocr_title_correct" : fused.source}`);
+  if (wasCorrected) {
+    messageParts.push(`corrected_from=${fused.documentType}`);
+  }
+  if (local.evidence.length) {
+    messageParts.push(`local=${local.evidence.join(",")}`);
+  }
+
+  return {
+    documentType: correctedType,
+    confidence: wasCorrected
+      ? Math.max(fused.confidence, 0.85)
+      : fused.confidence,
+    source: wasCorrected ? "ocr_title_correct" : fused.source,
+    message: messageParts.join(" | "),
+    localEvidence: local.evidence,
+  };
+}
+
+/** Expose local classify for verify re-check path */
+export { classifyDocumentLocally, hasGeminiApiKey };

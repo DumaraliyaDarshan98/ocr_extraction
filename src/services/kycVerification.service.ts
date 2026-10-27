@@ -1,6 +1,12 @@
 import { extractText } from "./ocr.service";
 import { detectKeywords } from "../utils/keyword.util";
 import { extractStructuredDataFromDocument } from "./geminiExtraction.service";
+import {
+  classifyDocumentLocally,
+  hasGeminiApiKey,
+  isWeakOrOtherType,
+  toInternalDocumentType,
+} from "./documentClassify.service";
 import { loadTriggerConfig, hasTriggersForDocumentType } from "./triggerConfig.service";
 import { runValidationEngine } from "../validation/validationEngine";
 import { analyzeDocumentAI } from "./aiVerification.service";
@@ -21,6 +27,68 @@ import type {
 } from "../types/kyc.types";
 import type { TriggerConfigFile, TriggerRule } from "../validation/types";
 import type { CustomValidatorRegistry } from "../validation/types";
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function buildIdValidityChecks(
+  documentType: string,
+  extracted: Record<string, unknown>,
+  ocrText: string,
+): { checks: KycCheck[]; errors: KycError[]; isIdValid: boolean | null } {
+  const checks: KycCheck[] = [];
+  const errors: KycError[] = [];
+  const dt = toInternalDocumentType(documentType);
+  const text = `${ocrText} ${JSON.stringify(extracted)}`.toLowerCase();
+
+  if (dt === "aadhaar") {
+    const fromData = String(
+      extracted.aadhaarNumber ?? extracted.uid ?? "",
+    ).replace(/\s/g, "");
+    const aadhaar = fromData
+      ? validateAadhaar(fromData)
+      : validateAadhaar(text);
+    checks.push({
+      id: "aadhaar_verhoeff",
+      label: "Aadhaar Verhoeff checksum",
+      source: "document",
+      status: aadhaar.valid ? "passed" : "failed",
+      details: aadhaar.valid
+        ? `Aadhaar checksum OK (${aadhaar.number})`
+        : "Aadhaar number missing or failed Verhoeff checksum",
+    });
+    if (!aadhaar.valid) {
+      errors.push({
+        field: "aadhaarNumber",
+        message: "Invalid or missing Aadhaar number (Verhoeff check failed)",
+      });
+    }
+    return { checks, errors, isIdValid: !!aadhaar.valid };
+  }
+
+  if (dt === "pan") {
+    const fromData = String(extracted.panNumber ?? extracted.pan ?? "").toUpperCase();
+    const pan = fromData
+      ? validatePAN(fromData)
+      : validatePAN(text.toUpperCase());
+    checks.push({
+      id: "pan_format",
+      label: "PAN format",
+      source: "document",
+      status: pan.valid ? "passed" : "failed",
+      details: pan.valid
+        ? `PAN format OK (${pan.number})`
+        : "PAN missing or invalid format",
+    });
+    if (!pan.valid) {
+      errors.push({ field: "panNumber", message: "Invalid or missing PAN" });
+    }
+    return { checks, errors, isIdValid: !!pan.valid };
+  }
+
+  return { checks, errors, isIdValid: null };
+}
 
 export interface KycRunOptions {
   documentType: string;
@@ -551,39 +619,117 @@ export async function runKycVerification(
   const thresholds = getKycThresholds();
   const errors: KycError[] = [];
   const checks: KycCheck[] = [];
-  const normalizedType = (options.documentType || "").toLowerCase();
+  let normalizedType = toInternalDocumentType(options.documentType || "");
   const rcuTriggers = options.rcuTriggers;
   const useRcuTriggers = Array.isArray(rcuTriggers);
-  const canUseGemini = !!process.env.GEMINI_API_KEY;
+  const canUseGemini = hasGeminiApiKey();
 
   let extractedData: Record<string, unknown> = {};
   let confidence: Record<string, number> = {};
   let extractionOk = false;
   let triggerResults: TriggerResultItem[] = [];
 
+  // Re-check misclassified / Other docs before extraction (Aadhaar etc.).
+  if (isWeakOrOtherType(normalizedType)) {
+    try {
+      const local = await classifyDocumentLocally(
+        options.documentPath,
+        options.documentMimeType,
+      );
+      if (!isWeakOrOtherType(local.documentType) && local.confidence >= 0.55) {
+        console.log(
+          `[OCR:VERIFY] reclassified "${normalizedType}" → "${local.documentType}" conf=${local.confidence}`,
+        );
+        normalizedType = toInternalDocumentType(local.documentType);
+        extractedData = { ...local.extractedData };
+        for (const [k, v] of Object.entries(local.extractedData)) {
+          confidence[k] = typeof v === "string" && v ? 0.75 : 0.5;
+        }
+      }
+    } catch (reclassErr) {
+      console.warn("[OCR:VERIFY] reclassify failed", reclassErr);
+    }
+  }
+
   if (useRcuTriggers) {
-    if (!canUseGemini) {
-      return {
-        success: true,
-        documentType: normalizedType,
-        isValid: false,
-        extractedData: {},
-        confidence: {},
-        faceMatchScore: null,
-        nameMatchScore: null,
-        checks: [],
-        triggerResults: [],
-        errors: [{ field: "extraction", message: "Gemini extraction unavailable (check GEMINI_API_KEY)" }],
-        message: "Gemini extraction unavailable (check GEMINI_API_KEY)",
-      };
+    let extracted: Awaited<
+      ReturnType<typeof extractStructuredDataFromDocument>
+    > | null = null;
+
+    if (canUseGemini) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          console.log(
+            `[OCR:VERIFY] Gemini extract attempt ${attempt} type="${normalizedType}"`,
+          );
+          extracted = await extractStructuredDataFromDocument(
+            options.documentPath,
+            normalizedType,
+            options.documentMimeType,
+            rcuTriggers,
+          );
+          const hasFields =
+            extracted &&
+            extracted.data &&
+            Object.keys(extracted.data).filter((k) => k !== "documentType")
+              .length > 0;
+          if (hasFields) break;
+          if (attempt < 2) await sleep(500);
+        } catch (extractErr) {
+          console.warn(
+            `[OCR:VERIFY] Gemini extract attempt ${attempt} failed`,
+            extractErr,
+          );
+          if (attempt < 2) await sleep(700);
+        }
+      }
+    } else {
+      console.warn(
+        "[OCR:VERIFY] GEMINI_API_KEY missing — local OCR extraction + forensics only",
+      );
     }
 
-    const extracted = await extractStructuredDataFromDocument(
-      options.documentPath,
-      normalizedType,
-      options.documentMimeType,
-      rcuTriggers
-    );
+    // Local fallback when Gemini missing or returned empty fields
+    const geminiEmpty =
+      !extracted?.data ||
+      Object.keys(extracted.data).filter((k) => k !== "documentType").length === 0;
+
+    if (geminiEmpty) {
+      const local = await classifyDocumentLocally(
+        options.documentPath,
+        options.documentMimeType,
+      );
+      if (isWeakOrOtherType(normalizedType) && !isWeakOrOtherType(local.documentType)) {
+        normalizedType = toInternalDocumentType(local.documentType);
+      }
+      extractedData = { ...extractedData, ...local.extractedData };
+      for (const [k, v] of Object.entries(local.extractedData)) {
+        confidence[k] = typeof v === "string" && v ? 0.7 : 0.45;
+      }
+      if (!extracted) {
+        extracted = {
+          data: extractedData,
+          fieldConfidence: confidence,
+          rawText: local.ocrText,
+          triggerResults: (rcuTriggers || []).map((t) => ({
+            code: t.code,
+            status: "skipped" as const,
+            message: canUseGemini
+              ? "Skip — Gemini extraction empty; local OCR used for ID fields"
+              : "Skip — Gemini unavailable; local OCR used for ID fields",
+          })),
+        };
+      } else {
+        extracted.data = { ...local.extractedData, ...extracted.data };
+        extracted.fieldConfidence = {
+          ...confidence,
+          ...extracted.fieldConfidence,
+        };
+      }
+    } else if (extracted) {
+      extractedData = extracted.data;
+      confidence = extracted.fieldConfidence;
+    }
 
     if (!extracted) {
       return {
@@ -596,7 +742,14 @@ export async function runKycVerification(
         nameMatchScore: null,
         checks: [],
         triggerResults: [],
-        errors: [{ field: "extraction", message: "Extraction failed" }],
+        errors: [
+          {
+            field: "extraction",
+            message: canUseGemini
+              ? "Extraction failed after retries"
+              : "Gemini extraction unavailable (set GEMINI_API_KEY) and local OCR found no ID fields",
+          },
+        ],
         message: "Extraction failed",
       };
     }
@@ -611,6 +764,14 @@ export async function runKycVerification(
         text: source?.text || "",
       };
     });
+
+    const idValidity = buildIdValidityChecks(
+      normalizedType,
+      extracted.data,
+      typeof extracted.rawText === "string" ? extracted.rawText : "",
+    );
+    checks.push(...idValidity.checks);
+    errors.push(...idValidity.errors);
 
     const forensics = await runDocumentForensics({
       filePath: options.documentPath,
@@ -630,19 +791,22 @@ export async function runKycVerification(
       verdict === "TEMP" ||
       verdict === "SUSPICIOUS" ||
       verdict === "MANUAL_REVIEW";
+    const idOk = idValidity.isIdValid !== false;
 
     return {
       success: true,
       documentType: normalizedType,
-      isValid: !notClean,
+      isValid: !notClean && idOk,
       extractedData: extracted.data,
       confidence: extracted.fieldConfidence,
       faceMatchScore: null,
       nameMatchScore: null,
-      checks: [],
+      checks,
       triggerResults,
-      errors: [],
-      message: `OCR extraction + forensics completed (${forensics.forensicSummary.verdictLabel})`,
+      errors,
+      message: !canUseGemini
+        ? `Local OCR + forensics (${forensics.forensicSummary.verdictLabel}). Set GEMINI_API_KEY for full AI extraction.`
+        : `OCR extraction + forensics completed (${forensics.forensicSummary.verdictLabel})`,
       fileHash: forensics.fileHash,
       fileSizeBytes: forensics.fileSizeBytes,
       pdfMetadata: forensics.pdfMetadata,

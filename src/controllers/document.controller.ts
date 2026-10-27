@@ -280,25 +280,37 @@ export const identifyDocument = async (req: Request, res: Response) => {
     const result = await identifyDocumentTypeFromFile(filePath, file?.mimetype);
     if (!result) {
       console.warn(
-        `[OCR:IDENTIFY] low confidence → Other file="${file?.originalname}" ms=${Date.now() - started}`
+        `[OCR:IDENTIFY] failed → Other file="${file?.originalname}" ms=${Date.now() - started}`,
       );
       return res.status(200).json({
         success: true,
         documentType: "Other",
         confidence: 0,
-        message: "Could not confidently identify document; defaulted to Other",
+        source: "none",
+        message:
+          "Could not identify document. Check GEMINI_API_KEY and upload a clearer image.",
       });
     }
 
+    const isWeak =
+      result.confidence < 0.45 ||
+      String(result.documentType).toLowerCase() === "other";
+
     console.log(
-      `[OCR:IDENTIFY] OK file="${file?.originalname}" documentType="${result.documentType}" confidence=${result.confidence} ms=${Date.now() - started}`
+      `[OCR:IDENTIFY] ${isWeak ? "WEAK" : "OK"} file="${file?.originalname}" documentType="${result.documentType}" confidence=${result.confidence} source=${result.source} ms=${Date.now() - started}`,
     );
 
     return res.json({
       success: true,
       documentType: result.documentType,
       confidence: result.confidence,
-      message: "Document identified",
+      source: result.source,
+      evidence: result.localEvidence ?? [],
+      message:
+        result.message ||
+        (isWeak
+          ? "Low-confidence identification — verify manually if needed"
+          : "Document identified"),
     });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

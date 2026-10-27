@@ -10,6 +10,16 @@ const server = app.listen(PORT, () => {
       "[ocr] OCR_SERVICE_API_KEY is not set — API key auth is disabled (dev only).",
     );
   }
+  const geminiKey = String(
+    process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "",
+  ).trim();
+  if (!geminiKey) {
+    console.warn(
+      "[ocr] GEMINI_API_KEY is NOT set — identify/verify will use local Tesseract fallbacks only. Add a Google AI Studio key to ocr_extraction/.env for full Aadhaar/PAN AI extraction.",
+    );
+  } else {
+    console.log(`[ocr] Gemini configured (key length=${geminiKey.length})`);
+  }
 });
 
 server.on("error", (err: NodeJS.ErrnoException) => {

@@ -320,7 +320,194 @@ export async function analyzeImageForensics(
   const ela = await analyzeErrorLevel(filePath);
   if (ela) signals.push(ela);
 
+  const markOverlay = await analyzeInkMarkOverlay(filePath);
+  if (markOverlay) signals.push(markOverlay);
+
   return signals;
+}
+
+/**
+ * Detect pen / digital annotation overlays (circles, scribbles, highlighter)
+ * that ELA often misses on already-compressed phone photos of KYC cards.
+ * Looks for saturated ink-like colors atypical of clean Aadhaar/PAN scans
+ * (especially blue/cyan markup circles).
+ */
+async function analyzeInkMarkOverlay(filePath: string): Promise<ForensicSignal | null> {
+  try {
+    const base = sharp(filePath, { failOn: "none" }).rotate().removeAlpha();
+    const meta = await base.metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+    if (width < 48 || height < 48) return null;
+
+    const maxSide = 1200;
+    const scale =
+      Math.max(width, height) > maxSide ? maxSide / Math.max(width, height) : 1;
+    const w = Math.max(16, Math.round(width * scale));
+    const h = Math.max(16, Math.round(height * scale));
+
+    const { data, info } = await base
+      .clone()
+      .resize(w, h, { fit: "fill" })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const channels = info.channels || 3;
+    const pixels = Math.floor(data.length / channels);
+    if (pixels < 256) return null;
+
+    let ink = 0;
+    let blueInk = 0;
+    let redInk = 0;
+    let yellowInk = 0;
+    let magentaInk = 0;
+
+    // Spatial grid to require clustered marks (not 1px noise)
+    const cell = 16;
+    const cols = Math.ceil(w / cell);
+    const rows = Math.ceil(h / cell);
+    const cellInk = new Uint16Array(cols * rows);
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * channels;
+        const r = data[o] ?? 0;
+        const g = data[o + 1] ?? 0;
+        const b = data[o + 2] ?? 0;
+        const kind = classifyInkPixel(r, g, b);
+        if (!kind) continue;
+        ink++;
+        if (kind === "blue") blueInk++;
+        else if (kind === "red") redInk++;
+        else if (kind === "yellow") yellowInk++;
+        else if (kind === "magenta") magentaInk++;
+        const cx = Math.min(cols - 1, Math.floor(x / cell));
+        const cy = Math.min(rows - 1, Math.floor(y / cell));
+        cellInk[cy * cols + cx]++;
+      }
+    }
+
+    let hotCells = 0;
+    for (let i = 0; i < cellInk.length; i++) {
+      if (cellInk[i] >= 12) hotCells++;
+    }
+
+    const inkRatio = ink / pixels;
+    // Drawn circles on Aadhaar are typically a few hundred–thousand blue pixels
+    // after downscale; require both volume and spatial clustering.
+    const suspicious =
+      (blueInk >= 350 && hotCells >= 2) ||
+      (ink >= 500 && hotCells >= 3 && inkRatio >= 0.0008) ||
+      (inkRatio >= 0.003 && hotCells >= 2) ||
+      (blueInk >= 180 && hotCells >= 4);
+
+    if (suspicious) {
+      const dominant =
+        blueInk >= redInk && blueInk >= yellowInk && blueInk >= magentaInk
+          ? "blue_or_cyan_pen"
+          : redInk >= yellowInk && redInk >= magentaInk
+            ? "red_pen"
+            : yellowInk >= magentaInk
+              ? "yellow_highlighter"
+              : "magenta_markup";
+
+      return {
+        code: "IMAGE_MARK_OVERLAY",
+        threatCode: "T054",
+        severity: "high",
+        score: 38,
+        status: "failed",
+        title: "Pen / annotation marks detected on image",
+        description: `Saturated ink-like overlay pixels found (${dominant}; ~${ink} px, ${hotCells} clusters) — typical of drawn circles, scribbles, or highlighter on a KYC document.`,
+        evidence: {
+          inkPixels: ink,
+          blueInk,
+          redInk,
+          yellowInk,
+          magentaInk,
+          inkRatio: Number(inkRatio.toFixed(5)),
+          hotCells,
+          dominant,
+          analyzedSize: `${w}x${h}`,
+        },
+      };
+    }
+
+    return {
+      code: "IMAGE_MARK_OVERLAY_CLEAR",
+      threatCode: "T054",
+      severity: "low",
+      score: 0,
+      status: "passed",
+      title: "No pen/annotation overlay detected",
+      description: `No clustered ink-like overlay colors found (ink px ${ink}, clusters ${hotCells}).`,
+      evidence: {
+        inkPixels: ink,
+        blueInk,
+        hotCells,
+        inkRatio: Number(inkRatio.toFixed(5)),
+        analyzedSize: `${w}x${h}`,
+      },
+    };
+  } catch (err) {
+    console.warn(
+      "[OCR:FORENSICS] Mark-overlay analysis skipped:",
+      (err as Error)?.message ?? err
+    );
+    return {
+      code: "IMAGE_MARK_OVERLAY_SKIPPED",
+      threatCode: "T054",
+      severity: "low",
+      score: 0,
+      status: "skipped",
+      title: "Mark-overlay analysis skipped",
+      description: "Could not scan image for pen/annotation overlays.",
+    };
+  }
+}
+
+/** Classify saturated ink colors while avoiding Aadhaar saffron/green header bands. */
+function classifyInkPixel(
+  r: number,
+  g: number,
+  b: number
+): "blue" | "red" | "yellow" | "magenta" | null {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max < 40) return null;
+  const sat = (max - min) / max;
+  if (sat < 0.32) return null;
+
+  // Skip muted header greens (Aadhaar band) — need vivid highlighter green/yellow
+  // Skip saffron/orange emblem (high R, mid G, low B) unless very pure red pen
+
+  // Blue / cyan digital or ballpoint annotation (the common “circle the name” case)
+  if (b >= 85 && b >= r + 28 && b >= g + 18 && b >= max * 0.88 && sat >= 0.34) {
+    return "blue";
+  }
+
+  // Magenta / purple markup
+  if (
+    r >= 90 &&
+    b >= 90 &&
+    g <= Math.min(r, b) - 25 &&
+    sat >= 0.36 &&
+    Math.min(r, b) >= max * 0.75
+  ) {
+    return "magenta";
+  }
+
+  // Yellow highlighter (bright Y, not orange saffron)
+  if (r >= 170 && g >= 160 && b <= 110 && sat >= 0.38 && g >= r * 0.75) {
+    return "yellow";
+  }
+
+  // Pure-ish red pen (not saffron: saffron has higher green)
+  if (r >= 160 && g <= 70 && b <= 70 && sat >= 0.48 && r >= max * 0.9) {
+    return "red";
+  }
+
+  return null;
 }
 
 function mimeToExt(mimeTypeHint?: string): string {
