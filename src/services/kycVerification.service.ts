@@ -7,6 +7,10 @@ import {
   isWeakOrOtherType,
   toInternalDocumentType,
 } from "./documentClassify.service";
+import {
+  evaluateDocumentValidation,
+  validationStatusToIsValid,
+} from "./documentValidation.service";
 import { loadTriggerConfig, hasTriggersForDocumentType } from "./triggerConfig.service";
 import { runValidationEngine } from "../validation/validationEngine";
 import { analyzeDocumentAI } from "./aiVerification.service";
@@ -674,13 +678,13 @@ export async function runKycVerification(
             Object.keys(extracted.data).filter((k) => k !== "documentType")
               .length > 0;
           if (hasFields) break;
-          if (attempt < 2) await sleep(500);
+          if (attempt < 2) await sleep(200);
         } catch (extractErr) {
           console.warn(
             `[OCR:VERIFY] Gemini extract attempt ${attempt} failed`,
             extractErr,
           );
-          if (attempt < 2) await sleep(700);
+          if (attempt < 2) await sleep(300);
         }
       }
     } else {
@@ -732,6 +736,16 @@ export async function runKycVerification(
     }
 
     if (!extracted) {
+      const failMsg = canUseGemini
+        ? "Extraction failed after retries"
+        : "Gemini extraction unavailable (set GEMINI_API_KEY) and local OCR found no ID fields";
+      const validationReport = evaluateDocumentValidation({
+        documentType: normalizedType,
+        identifyConfidence: 0.7,
+        extractionOk: false,
+        processingError: failMsg,
+        sourceFileName: options.originalFileName ?? null,
+      });
       return {
         success: true,
         documentType: normalizedType,
@@ -742,15 +756,12 @@ export async function runKycVerification(
         nameMatchScore: null,
         checks: [],
         triggerResults: [],
-        errors: [
-          {
-            field: "extraction",
-            message: canUseGemini
-              ? "Extraction failed after retries"
-              : "Gemini extraction unavailable (set GEMINI_API_KEY) and local OCR found no ID fields",
-          },
-        ],
+        errors: [{ field: "extraction", message: failMsg }],
         message: "Extraction failed",
+        validationStatus: validationReport.status,
+        validationStatusLabel: validationReport.statusLabel,
+        validationReport,
+        identifyConfidence: null,
       };
     }
 
@@ -787,16 +798,46 @@ export async function runKycVerification(
     });
 
     const verdict = forensics.forensicSummary.verdict;
-    const notClean =
-      verdict === "TEMP" ||
-      verdict === "SUSPICIOUS" ||
-      verdict === "MANUAL_REVIEW";
     const idOk = idValidity.isIdValid !== false;
+
+    const validationReport = evaluateDocumentValidation({
+      documentType: normalizedType,
+      identifyConfidence: 0.85,
+      extractedData: extracted.data,
+      fieldConfidence: extracted.fieldConfidence,
+      ocrText: typeof extracted.rawText === "string" ? extracted.rawText : "",
+      extractionOk: true,
+      sourceFileName: options.originalFileName ?? null,
+      forensicVerdict: verdict,
+      idChecksumFailed: idValidity.isIdValid === false,
+    });
+
+    // Banking rule: only VALID counts as isValid; forensics/fields drive Needs Review.
+    const isValid = validationStatusToIsValid(validationReport.status) && idOk;
+
+    if (validationReport.status === "NEEDS_REVIEW" || validationReport.status === "INVALID") {
+      for (const reason of validationReport.reasons.slice(0, 5)) {
+        errors.push({ field: "validation", message: reason });
+      }
+    }
+
+    checks.push({
+      id: "banking-validation",
+      label: "Banking document validation",
+      source: "system",
+      status:
+        validationReport.status === "VALID"
+          ? "passed"
+          : validationReport.status === "NEEDS_REVIEW"
+            ? "skipped"
+            : "failed",
+      details: `${validationReport.statusLabel}: ${validationReport.reasons[0] ?? ""}`,
+    });
 
     return {
       success: true,
       documentType: normalizedType,
-      isValid: !notClean && idOk,
+      isValid,
       extractedData: extracted.data,
       confidence: extracted.fieldConfidence,
       faceMatchScore: null,
@@ -805,8 +846,12 @@ export async function runKycVerification(
       triggerResults,
       errors,
       message: !canUseGemini
-        ? `Local OCR + forensics (${forensics.forensicSummary.verdictLabel}). Set GEMINI_API_KEY for full AI extraction.`
-        : `OCR extraction + forensics completed (${forensics.forensicSummary.verdictLabel})`,
+        ? `Local OCR + forensics (${forensics.forensicSummary.verdictLabel}). Validation: ${validationReport.statusLabel}. Set GEMINI_API_KEY for full AI extraction.`
+        : `OCR extraction + forensics completed (${forensics.forensicSummary.verdictLabel}). Validation: ${validationReport.statusLabel}`,
+      validationStatus: validationReport.status,
+      validationStatusLabel: validationReport.statusLabel,
+      validationReport,
+      identifyConfidence: validationReport.identification.confidence,
       fileHash: forensics.fileHash,
       fileSizeBytes: forensics.fileSizeBytes,
       pdfMetadata: forensics.pdfMetadata,
@@ -1099,7 +1144,37 @@ export async function runKycVerification(
         : "Expected keywords not found",
   });
 
-  const isValid = errors.length === 0;
+  const validationReport = evaluateDocumentValidation({
+    documentType: normalizedType,
+    identifyConfidence: extractionOk ? 0.8 : 0.3,
+    extractedData,
+    fieldConfidence: confidence,
+    ocrText,
+    extractionOk,
+    sourceFileName: options.originalFileName ?? null,
+    idChecksumFailed: errors.some(
+      (e) =>
+        /aadhaar|pan|passport|license|checksum|format/i.test(e.field) ||
+        /checksum|invalid or missing/i.test(e.message),
+    ),
+  });
+
+  // Prefer banking status over raw error-count; still surface trigger/name/face errors.
+  const isValid =
+    validationStatusToIsValid(validationReport.status) && errors.length === 0;
+
+  checks.push({
+    id: "banking-validation",
+    label: "Banking document validation",
+    source: "system",
+    status:
+      validationReport.status === "VALID"
+        ? "passed"
+        : validationReport.status === "NEEDS_REVIEW"
+          ? "skipped"
+          : "failed",
+    details: `${validationReport.statusLabel}: ${validationReport.reasons[0] ?? ""}`,
+  });
 
   return {
     success: true,
@@ -1112,6 +1187,10 @@ export async function runKycVerification(
     checks,
     triggerResults,
     errors,
-    message: buildMessage(errors, isValid),
+    message: `${buildMessage(errors, isValid)} · Validation: ${validationReport.statusLabel}`,
+    validationStatus: validationReport.status,
+    validationStatusLabel: validationReport.statusLabel,
+    validationReport,
+    identifyConfidence: validationReport.identification.confidence,
   };
 }

@@ -39,6 +39,44 @@ export interface ForensicSummaryItem {
   failedTriggerCount: number;
 }
 
+/** Banking-grade per-document validation status (separate from case workflow). */
+export type DocumentValidationStatus =
+  | "VALID"
+  | "NEEDS_REVIEW"
+  | "INVALID"
+  | "PROCESSING_FAILED";
+
+export interface DocumentFieldValidationItem {
+  field: string;
+  status: "passed" | "failed" | "missing" | "skipped" | "low_confidence";
+  severity: "error" | "warning" | "info";
+  message: string;
+  valuePreview?: string | null;
+}
+
+export interface DocumentValidationReportPayload {
+  status: DocumentValidationStatus;
+  statusLabel: string;
+  reasons: string[];
+  fieldResults: DocumentFieldValidationItem[];
+  identification: {
+    documentType: string;
+    confidence: number;
+    accepted: boolean;
+    uncertain: boolean;
+  };
+  authenticityNote: string;
+  trace: {
+    sourceFile?: string | null;
+    identifySource?: string | null;
+    extractionOk: boolean;
+    requiredFieldCount: number;
+    failedFieldCount: number;
+    missingFieldCount: number;
+    lowConfidenceFieldCount: number;
+  };
+}
+
 export interface KycApiResponse {
   /** False when HTTP 400 or 500; true when the handler completed normally */
   success: boolean;
@@ -52,6 +90,11 @@ export interface KycApiResponse {
   triggerResults: TriggerResultItem[];
   errors: KycError[];
   message: string;
+  /** Banking-grade validation (identify ≠ extract ≠ validate ≠ authenticity). */
+  validationStatus?: DocumentValidationStatus;
+  validationStatusLabel?: string;
+  validationReport?: DocumentValidationReportPayload | null;
+  identifyConfidence?: number | null;
   /** Phase-1 forensics */
   fileHash?: string | null;
   fileSizeBytes?: number | null;

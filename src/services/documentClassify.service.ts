@@ -125,35 +125,85 @@ function extractLikelyName(text: string): string | null {
   return null;
 }
 
+/** Strong MSME / Udyam signals — must never be classified as personal Aadhaar. */
+export function hasStrongUdyamSignals(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  if (!t.trim()) return false;
+  if (/\budyam[-\s]?[a-z]{2}[-\s]?\d{2}[-\s]?\d{5,}/i.test(text)) return true;
+  if (/udyam\s+registration\s+certificate/.test(t)) return true;
+  if (/udyam\s+registration\s+number/.test(t)) return true;
+  if (/date\s+of\s+udyam\s+registration/.test(t)) return true;
+  if (/udyamregistration\.gov\.in/.test(t)) return true;
+  if (/national\s+industry\s+classification/.test(t)) return true;
+  if (/type\s+of\s+enterprise/.test(t) && /udyam|msme|micro/.test(t)) return true;
+  if (/udyog\s+aadhaar/.test(t)) return true;
+  if (/ministry\s+of\s+micro/.test(t) && /medium\s+enterprises|msme/.test(t)) {
+    return true;
+  }
+  const hits = countHits(t, [
+    "udyam",
+    "msme",
+    "micro, small and medium",
+    "micro small and medium",
+    "nic 2 digit",
+    "nic 4 digit",
+    "nic 5 digit",
+  ]);
+  return hits >= 2;
+}
+
+function hasStrongAadhaarCardSignals(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  // Strip Udyog Aadhaar phrases so leftover "aadhaar" does not fake an ID card.
+  const stripped = t.replace(/udyog\s+aadhaa?r/g, " ");
+  return (
+    /uidai|unique identification authority|मेरा आधार/.test(stripped) ||
+    (/\bआधार\b/.test(stripped) && !/udyam|msme|enterprise/.test(t)) ||
+    (/\baadhaa?r\b/.test(stripped) &&
+      !/udyam|msme|enterprise|registration certificate/.test(t))
+  );
+}
+
 function scoreAadhaar(text: string): Candidate | null {
+  // Udyam / Udyog Aadhaar / MSME certificates contain the word "aadhaar" — never Aadhaar Card.
+  if (hasStrongUdyamSignals(text)) return null;
+
   const evidence: string[] = [];
   let score = 0;
   const extracted: Record<string, unknown> = {};
+  const stripped = text.replace(/udyog\s+aadhaa?r/gi, " ");
 
-  const aadhaar = validateAadhaar(text);
+  const aadhaar = validateAadhaar(stripped);
   if (aadhaar.valid && aadhaar.number) {
     score += 0.55;
     evidence.push("verhoeff_aadhaar");
     extracted.aadhaarNumber = aadhaar.number;
     extracted.aadhaarFormatValid = true;
-  } else if (/\b\d{4}\s?\d{4}\s?\d{4}\b/.test(text)) {
-    score += 0.2;
+  } else if (/\b\d{4}\s?\d{4}\s?\d{4}\b/.test(stripped)) {
+    score += 0.15;
     evidence.push("12_digit_pattern");
     extracted.aadhaarFormatValid = false;
   }
 
-  const keywordHits = countHits(text, [
-    "aadhaar",
-    "aadhar",
+  const keywordHits = countHits(stripped, [
     "uidai",
     "unique identification authority",
-    "government of india",
     "मेरा आधार",
     "आधार",
   ]);
-  if (keywordHits > 0) {
-    score += Math.min(0.35, keywordHits * 0.12);
-    evidence.push(`aadhaar_keywords:${keywordHits}`);
+  // Count "aadhaar/aadhar" only outside Udyog Aadhaar context (already stripped).
+  const aadhaarWordHits = countHits(stripped, ["aadhaar", "aadhar"]);
+  const govHit = includesNeedle(stripped, "government of india") ? 1 : 0;
+  const totalKw = keywordHits + aadhaarWordHits + govHit;
+  if (totalKw > 0) {
+    score += Math.min(0.35, totalKw * 0.12);
+    evidence.push(`aadhaar_keywords:${totalKw}`);
+  }
+
+  // Require at least one strong Aadhaar-card signal (UIDAI / आधार / aadhaar word),
+  // not only "government of india" + a random 12-digit Verhoeff collision.
+  if (!hasStrongAadhaarCardSignals(stripped) && !aadhaar.valid) {
+    return null;
   }
 
   const dob = extractDob(text);
@@ -175,7 +225,7 @@ function scoreAadhaar(text: string): Candidate | null {
     evidence.push("name");
   }
 
-  if (score < 0.35) return null;
+  if (score < 0.4) return null;
   return {
     label: "Aadhaar",
     score: Math.min(0.98, score),
@@ -354,26 +404,48 @@ function scoreMarksheet(text: string): Candidate | null {
 
 function scoreUdyam(text: string): Candidate | null {
   const needles = [
-    "udyam",
-    "udyog aadhaar",
+    "udyam registration certificate",
+    "udyam registration number",
+    "date of udyam registration",
     "udyam registration",
+    "udyog aadhaar",
+    "udyam",
     "ministry of micro",
     "msme",
     "micro, small and medium",
     "micro small and medium",
+    "national industry classification",
+    "type of enterprise",
+    "name of enterprise",
+    "official address of enterprise",
+    "udyamregistration.gov.in",
+    "nic 2 digit",
+    "nic 4 digit",
+    "nic 5 digit",
   ];
   const hits = countHits(text, needles);
   const hasUdyamId = /\budyam[-\s]?[a-z]{2}[-\s]?\d{2}[-\s]?\d{5,}/i.test(text);
-  if (hits < 1 && !hasUdyamId) return null;
-  const score = Math.min(0.97, 0.5 + hits * 0.12 + (hasUdyamId ? 0.25 : 0));
+  const strong = hasStrongUdyamSignals(text);
+  if (hits < 1 && !hasUdyamId && !strong) return null;
+  const score = Math.min(
+    0.99,
+    0.55 + hits * 0.08 + (hasUdyamId ? 0.3 : 0) + (strong ? 0.15 : 0),
+  );
   return {
     label: "Udyam Certificate",
     score,
     evidence: [
       `udyam_keywords:${hits}`,
       ...(hasUdyamId ? ["udyam_id_pattern"] : []),
+      ...(strong ? ["udyam_strong_signal"] : []),
     ],
-    extracted: {},
+    extracted: hasUdyamId
+      ? {
+          udyamRegistrationNumber:
+            text.match(/\budyam-[a-z]{2}-\d{2}-\d{5,}\b/i)?.[0]?.toUpperCase() ??
+            null,
+        }
+      : {},
   };
 }
 
@@ -452,30 +524,10 @@ function scoreFinancial(text: string): Candidate | null {
 }
 
 /**
- * Local (Tesseract + validators) document classification.
- * Used when Gemini is down / misclassifies, and to cross-check AI results.
+ * Classify from already-extracted OCR text (no Tesseract).
+ * Prefer this for unit/smoke tests and when text is already available.
  */
-export async function classifyDocumentLocally(
-  filePath: string,
-  mimeTypeHint?: string,
-): Promise<ClassifiedDocument> {
-  const absolute = path.resolve(filePath);
-  const prepPath = await prepareForLocalOcr(absolute);
-  let ocrText = "";
-  try {
-    ocrText = await extractText(prepPath, mimeTypeHint || "image/png");
-  } catch (err) {
-    console.warn("[OCR:CLASSIFY] local OCR failed", err);
-  } finally {
-    if (prepPath !== absolute && fs.existsSync(prepPath)) {
-      try {
-        fs.unlinkSync(prepPath);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
+export function classifyFromOcrText(ocrText: string): ClassifiedDocument {
   const text = (ocrText || "").toLowerCase();
   if (!text.trim()) {
     return {
@@ -511,10 +563,6 @@ export async function classifyDocumentLocally(
     };
   }
 
-  console.log(
-    `[OCR:CLASSIFY] local → ${top.label} conf=${top.score.toFixed(2)} evidence=${top.evidence.join(",")}`,
-  );
-
   return {
     documentType: top.label,
     confidence: top.score,
@@ -524,13 +572,52 @@ export async function classifyDocumentLocally(
   };
 }
 
+/**
+ * Local (Tesseract + validators) document classification.
+ * Used when Gemini is down / misclassifies, and to cross-check AI results.
+ */
+export async function classifyDocumentLocally(
+  filePath: string,
+  mimeTypeHint?: string,
+): Promise<ClassifiedDocument> {
+  const absolute = path.resolve(filePath);
+  const prepPath = await prepareForLocalOcr(absolute);
+  let ocrText = "";
+  try {
+    ocrText = await extractText(prepPath, mimeTypeHint || "image/png");
+  } catch (err) {
+    console.warn("[OCR:CLASSIFY] local OCR failed", err);
+  } finally {
+    if (prepPath !== absolute && fs.existsSync(prepPath)) {
+      try {
+        fs.unlinkSync(prepPath);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const result = classifyFromOcrText(ocrText);
+  if (result.evidence.includes("empty_ocr")) {
+    return result;
+  }
+
+  console.log(
+    `[OCR:CLASSIFY] local → ${result.documentType} conf=${result.confidence.toFixed(2)} evidence=${result.evidence.join(",")}`,
+  );
+  return result;
+}
+
 /** Canonical internal type used by verify / RCU mapping. */
 export function toInternalDocumentType(label: string): string {
   const t = (label || "").trim().toLowerCase();
-  if (/aadhaar|aadhar/.test(t)) return "aadhaar";
+  // Udyam / Udyog Aadhaar BEFORE personal Aadhaar — "Udyog Aadhaar" contains "aadhaar".
+  if (/udyam|udyog\s*aadhaa?r|msme\s*reg|msme\s*certificate/.test(t)) {
+    return "udyam certificate";
+  }
+  if (/aadhaar|aadhar|uidai|\bआधार\b/.test(t)) return "aadhaar";
   if (/\bpan\b/.test(t)) return "pan";
   if (/voter/.test(t)) return "voter card";
-  if (/udyam|udyog\s*aadhaar|msme\s*reg/.test(t)) return "udyam certificate";
   if (/leaving\s*certificate|\bschool\s*leaving\b|\blc\b/.test(t)) {
     return "leaving certificate";
   }
@@ -554,22 +641,41 @@ export function toInternalDocumentType(label: string): string {
 }
 
 /**
- * Override AI mislabels using strong OCR title/keyword evidence
- * (LC/marksheet → Form 16/TDS; Udyam → Driving License).
+ * Filename / original-name hints (e.g. "Udyam Registration Certificate_….pdf").
+ * Used when PDF text extraction fails and Gemini alone might mislabel.
  */
+export function correctTypeFromFileName(
+  documentType: string,
+  fileName?: string | null,
+): string {
+  const name = String(fileName || "")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  if (!name.trim()) return documentType;
+  if (/udyam|udyog\s*aadhaa?r|msme\s*reg/.test(name)) {
+    return "Udyam Certificate";
+  }
+  if (/aadhaar|aadhar|uidai/.test(name) && !/udyog/.test(name)) {
+    return "Aadhaar";
+  }
+  if (/\bpan\b|pancard/.test(name)) return "PAN";
+  return documentType;
+}
+
 export function correctMisclassifiedType(
   documentType: string,
   ocrText: string,
+  fileName?: string | null,
 ): string {
   const text = (ocrText || "").toLowerCase();
-  if (!text.trim()) return documentType;
-
-  if (
-    /udyam|udyog aadhaar|udyam registration|ministry of micro/.test(text) ||
-    /\budyam[-\s]?[a-z]{2}[-\s]?\d{2}/i.test(ocrText)
-  ) {
+  if (hasStrongUdyamSignals(ocrText) || hasStrongUdyamSignals(text)) {
     return "Udyam Certificate";
   }
+  const fromName = correctTypeFromFileName(documentType, fileName);
+  if (toInternalDocumentType(fromName) === "udyam certificate") {
+    return "Udyam Certificate";
+  }
+  if (!text.trim()) return fromName;
   if (
     /leaving certificate|date of leaving school|reason for leaving school|last school attended|\bl\.?\s*c\.?\s*no\b/.test(
       text,
@@ -634,22 +740,40 @@ export function fuseDocumentTypes(
     }
     const localInternal = toInternalDocumentType(local.documentType);
     const aiInternal = toInternalDocumentType(aiType);
-    // School LC / marksheet / Udyam beat a conflicting Form 16 or Driving License guess.
-    const localEducationOrUdyam =
-      localInternal === "leaving certificate" ||
-      localInternal === "marksheet" ||
-      localInternal === "udyam certificate";
+    // Udyam OCR evidence always beats an Aadhaar / DL / Form 16 AI mislabel.
+    if (
+      localInternal === "udyam certificate" &&
+      (aiInternal === "aadhaar" ||
+        aiInternal === "driving license" ||
+        aiInternal === "form 16" ||
+        aiInternal === "trade license") &&
+      local.confidence >= 0.55
+    ) {
+      return {
+        documentType: local.documentType,
+        confidence: Math.max(local.confidence, 0.9),
+        source: "local_override_udyam",
+      };
+    }
+    // School LC / marksheet beat a conflicting Form 16 or Driving License guess.
+    const localEducation =
+      localInternal === "leaving certificate" || localInternal === "marksheet";
     const aiForm16OrDl =
       aiInternal === "form 16" || aiInternal === "driving license";
-    if (localEducationOrUdyam && aiForm16OrDl && local.confidence >= 0.55) {
+    if (localEducation && aiForm16OrDl && local.confidence >= 0.55) {
       return {
         documentType: local.documentType,
         confidence: Math.max(local.confidence, 0.85),
-        source: "local_override_edu_udyam",
+        source: "local_override_edu",
       };
     }
-    // Strong Aadhaar Verhoeff / PAN pattern beats a conflicting weak AI guess.
-    if (local.confidence >= 0.75 && aiConf < 0.85) {
+    // Strong Aadhaar Verhoeff / PAN pattern beats a conflicting weak AI guess —
+    // but never override clear Udyam OCR with Aadhaar.
+    if (
+      local.confidence >= 0.75 &&
+      aiConf < 0.85 &&
+      aiInternal !== "udyam certificate"
+    ) {
       return {
         documentType: local.documentType,
         confidence: local.confidence,
@@ -659,6 +783,17 @@ export function fuseDocumentTypes(
   }
 
   if (!aiWeak) {
+    // AI said Aadhaar but OCR text is clearly Udyam/MSME — never trust the AI label.
+    if (
+      toInternalDocumentType(aiType) === "aadhaar" &&
+      hasStrongUdyamSignals(local.ocrText || "")
+    ) {
+      return {
+        documentType: "Udyam Certificate",
+        confidence: Math.max(0.9, local.confidence),
+        source: "ocr_udyam_vs_ai_aadhaar",
+      };
+    }
     return {
       documentType: aiType,
       confidence: aiConf,

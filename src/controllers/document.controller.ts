@@ -277,7 +277,11 @@ export const identifyDocument = async (req: Request, res: Response) => {
       });
     }
 
-    const result = await identifyDocumentTypeFromFile(filePath, file?.mimetype);
+    const result = await identifyDocumentTypeFromFile(
+      filePath,
+      file?.mimetype,
+      file?.originalname,
+    );
     if (!result) {
       console.warn(
         `[OCR:IDENTIFY] failed → Other file="${file?.originalname}" ms=${Date.now() - started}`,
@@ -287,17 +291,23 @@ export const identifyDocument = async (req: Request, res: Response) => {
         documentType: "Other",
         confidence: 0,
         source: "none",
+        identificationAccepted: false,
+        identificationUncertain: true,
+        validationStatus: "NEEDS_REVIEW",
+        validationStatusLabel: "Needs Review",
         message:
-          "Could not identify document. Check GEMINI_API_KEY and upload a clearer image.",
+          "Could not identify document with sufficient confidence. Manual review required — type was not guessed.",
       });
     }
 
     const isWeak =
+      !result.identificationAccepted ||
+      result.identificationUncertain ||
       result.confidence < 0.45 ||
       String(result.documentType).toLowerCase() === "other";
 
     console.log(
-      `[OCR:IDENTIFY] ${isWeak ? "WEAK" : "OK"} file="${file?.originalname}" documentType="${result.documentType}" confidence=${result.confidence} source=${result.source} ms=${Date.now() - started}`,
+      `[OCR:IDENTIFY] ${isWeak ? "WEAK" : "OK"} file="${file?.originalname}" documentType="${result.documentType}" confidence=${result.confidence} accepted=${result.identificationAccepted} status=${result.validationStatus} source=${result.source} ms=${Date.now() - started}`,
     );
 
     return res.json({
@@ -306,10 +316,21 @@ export const identifyDocument = async (req: Request, res: Response) => {
       confidence: result.confidence,
       source: result.source,
       evidence: result.localEvidence ?? [],
+      identificationAccepted: result.identificationAccepted,
+      identificationUncertain: result.identificationUncertain,
+      validationStatus: result.validationStatus,
+      validationStatusLabel:
+        result.validationStatus === "VALID"
+          ? "Valid"
+          : result.validationStatus === "INVALID"
+            ? "Invalid"
+            : result.validationStatus === "PROCESSING_FAILED"
+              ? "Processing Failed"
+              : "Needs Review",
       message:
         result.message ||
         (isWeak
-          ? "Low-confidence identification — verify manually if needed"
+          ? "Low-confidence or uncertain identification — manual review required (type not guessed)"
           : "Document identified"),
     });
   } catch (error) {
@@ -320,6 +341,10 @@ export const identifyDocument = async (req: Request, res: Response) => {
       success: false,
       documentType: null,
       confidence: null,
+      identificationAccepted: false,
+      identificationUncertain: true,
+      validationStatus: "PROCESSING_FAILED",
+      validationStatusLabel: "Processing Failed",
       message: errMsg || "Document identification failed",
     });
   }

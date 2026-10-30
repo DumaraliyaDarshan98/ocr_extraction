@@ -8,9 +8,16 @@ import { normalizeExtractedPayload } from "../utils/extractionNormalize.util";
 import {
   classifyDocumentLocally,
   correctMisclassifiedType,
+  correctTypeFromFileName,
   fuseDocumentTypes,
   hasGeminiApiKey,
+  hasStrongUdyamSignals,
+  toInternalDocumentType,
 } from "./documentClassify.service";
+import {
+  resolveAcceptedDocumentType,
+  type DocumentValidationStatus,
+} from "./documentValidation.service";
 
 function resolveGeminiApiKey(): string {
   return String(
@@ -38,17 +45,41 @@ function getGeminiClient() {
   return new GoogleGenerativeAI(key);
 }
 
-/* ---------------- IMAGE FIX (WEBP ISSUE) ---------------- */
+/**
+ * Normalize images for OCR (EXIF rotate, WEBP→PNG).
+ * PDFs are left intact so Gemini receives native application/pdf.
+ */
 async function prepareImage(filePath: string): Promise<string> {
   const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".pdf") return filePath;
 
-  if (ext === ".webp") {
-    const newPath = filePath.replace(".webp", ".png");
-    await sharp(filePath).png().toFile(newPath);
-    return newPath;
+  const needsNormalize =
+    ext === ".webp" ||
+    ext === ".jpg" ||
+    ext === ".jpeg" ||
+    ext === ".png";
+  if (!needsNormalize) return filePath;
+
+  const outPath = path.join(
+    path.dirname(filePath),
+    `${path.basename(filePath, ext)}.ocrnorm.png`,
+  );
+  try {
+    await sharp(filePath).rotate().normalize().png().toFile(outPath);
+    return outPath;
+  } catch (err) {
+    console.warn("[OCR] image normalize failed, using original", err);
+    if (ext === ".webp") {
+      try {
+        const fallback = filePath.replace(/\.webp$/i, ".png");
+        await sharp(filePath).png().toFile(fallback);
+        return fallback;
+      } catch {
+        return filePath;
+      }
+    }
+    return filePath;
   }
-
-  return filePath;
 }
 
 
@@ -1097,7 +1128,8 @@ async function generateContentWithRetryAndFallback(args: {
           break;
         }
 
-        const delay = Math.min(6000, 600 * Math.pow(2, attempt));
+        // Cap backoff — OCR Made path needs lower wall-clock latency.
+        const delay = Math.min(2500, 350 * Math.pow(2, attempt));
         console.log(`Retrying after ${delay}ms...`);
         await sleep(delay);
       }
@@ -1258,6 +1290,10 @@ export type IdentifyDocumentResult = {
   source: string;
   message?: string;
   localEvidence?: string[];
+  /** Banking gate: type accepted only when confidence / structure is sufficient. */
+  identificationAccepted: boolean;
+  identificationUncertain: boolean;
+  validationStatus: DocumentValidationStatus;
 };
 
 async function identifyWithGemini(
@@ -1271,25 +1307,27 @@ async function identifyWithGemini(
   const prompt = `
 You are an expert Indian KYC / financial / education document verifier.
 
-Identify the document type from this image/file.
+Identify the document type from this image or PDF file (scanned or digital).
 
 Return ONLY valid minified JSON:
 {"documentType":"","confidence":0}
 
 Rules:
 - documentType must be one of: ${KNOWN_DOCUMENT_TYPES.join(", ")}
-- Aadhaar (UIDAI / 12-digit UID / "आधार") → "Aadhaar" (NOT Other)
+- Udyam Registration Certificate / Udyog Aadhaar / MSME (UDYAM-XX-##-######, NIC codes, Ministry of MSME, udyamregistration.gov.in) → "Udyam Certificate"
+  (NEVER "Aadhaar", NEVER Driving License, NEVER Trade License — "Udyog Aadhaar" is MSME, not UIDAI Aadhaar)
+- Aadhaar card (UIDAI / personal 12-digit UID / "आधार" / unique identification) → "Aadhaar" (NOT Other)
+  (Do NOT classify Udyam / MSME certificates as Aadhaar just because the text contains "aadhaar")
 - PAN card → "PAN"
 - School "LEAVING CERTIFICATE" / LC / Transfer Certificate → "Leaving Certificate"
   (NOT Form 16, NOT TDS, NOT Other)
 - Board "Statement of Marks" / Marksheet / HSC-SSC result → "Marksheet"
   (NOT Form 16, NOT TDS Certificate, NOT Bank Statement)
-- Udyam / Udyog Aadhaar / MSME registration certificate → "Udyam Certificate"
-  (NOT Driving License, NOT Trade License)
 - Driving License only if it clearly says Driving Licence/License (RTO / transport)
 - Form 16 only for employer TDS Form 16 / section 203 tax deduction certificate
   (never school certificates or marksheets)
 - Prefer the most specific type; use "Other" only when clearly none of the list
+- If uncertain between two types, prefer "Other" with low confidence rather than guessing
 - confidence is 0 to 1
 - No markdown, no explanation
 `;
@@ -1308,9 +1346,16 @@ Rules:
     ? Math.min(1, Math.max(0, confidenceRaw))
     : 0.5;
 
-  // Normalize common aliases from the model
+  // Normalize common aliases from the model.
+  // Udyam / Udyog Aadhaar MUST be matched before personal Aadhaar.
   const lower = documentType.toLowerCase();
-  if (/aadhaar|aadhar|uidai/.test(lower)) {
+  if (/udyam|udyog\s*aadhaa?r|msme/.test(lower)) {
+    return {
+      documentType: "Udyam Certificate",
+      confidence: Math.max(confidence, 0.75),
+    };
+  }
+  if (/aadhaar|aadhar|uidai|\bआधार\b/.test(lower)) {
     return { documentType: "Aadhaar", confidence: Math.max(confidence, 0.7) };
   }
   if (/leaving|school\s*leaving|transfer\s*certificate|\blc\b/.test(lower)) {
@@ -1321,12 +1366,6 @@ Rules:
   }
   if (/mark\s*sheet|marksheet|statement\s*of\s*marks|hsc\s*result|ssc\s*result/.test(lower)) {
     return { documentType: "Marksheet", confidence: Math.max(confidence, 0.75) };
-  }
-  if (/udyam|udyog\s*aadhaar|msme/.test(lower)) {
-    return {
-      documentType: "Udyam Certificate",
-      confidence: Math.max(confidence, 0.75),
-    };
   }
   if (/tds/.test(lower) && /form\s*16|certificate/.test(lower)) {
     return { documentType: "Form 16", confidence: Math.max(confidence, 0.7) };
@@ -1342,9 +1381,12 @@ Rules:
 export async function identifyDocumentTypeFromFile(
   filePath: string,
   mimeTypeHint?: string,
+  originalFileName?: string,
 ): Promise<IdentifyDocumentResult | null> {
   let absolutePath = path.resolve(filePath);
   absolutePath = await prepareImage(absolutePath);
+  const fileNameHint =
+    originalFileName || path.basename(absolutePath) || undefined;
 
   // Always run local classifier (works without Gemini; cross-checks AI).
   const local = await classifyDocumentLocally(absolutePath, mimeTypeHint);
@@ -1358,11 +1400,11 @@ export async function identifyDocumentTypeFromFile(
       try {
         console.log(`[OCR:IDENTIFY] Gemini pass ${pass}`);
         ai = await identifyWithGemini(absolutePath, mimeTypeHint);
-        if (ai && ai.confidence >= 0.55 && ai.documentType.toLowerCase() !== "other") {
+        if (ai && ai.confidence >= 0.5 && ai.documentType.toLowerCase() !== "other") {
           break;
         }
-        // Low-confidence / Other → one more pass after short delay
-        if (pass < 2) await sleep(400);
+        // Only re-hit Gemini when first pass is genuinely weak
+        if (pass < 2) await sleep(200);
       } catch (err: any) {
         aiError = err?.message || String(err);
         console.log(
@@ -1370,7 +1412,7 @@ export async function identifyDocumentTypeFromFile(
           err?.status || aiError,
         );
         if (isAuthGeminiError(err)) break;
-        if (pass < 2) await sleep(600);
+        if (pass < 2) await sleep(300);
       }
     }
   } else {
@@ -1381,20 +1423,31 @@ export async function identifyDocumentTypeFromFile(
   }
 
   const fused = fuseDocumentTypes(ai, local);
-  const correctedType = correctMisclassifiedType(
+  // Filename boost (e.g. "Udyam Registration Certificate_….pdf") before OCR correction.
+  const nameBoosted = correctTypeFromFileName(
     fused.documentType,
+    fileNameHint,
+  );
+  const correctedType = correctMisclassifiedType(
+    nameBoosted,
     local.ocrText || "",
+    fileNameHint,
   );
   const wasCorrected =
-    correctedType.toLowerCase() !== fused.documentType.toLowerCase();
+    correctedType.toLowerCase() !== fused.documentType.toLowerCase() ||
+    toInternalDocumentType(nameBoosted) !==
+      toInternalDocumentType(fused.documentType);
 
   if (
     correctedType === "Other" &&
     fused.confidence < 0.4 &&
     !local.evidence.includes("empty_ocr")
   ) {
-    // Last-chance: if Verhoeff Aadhaar number exists in OCR, force Aadhaar.
-    if (local.extractedData?.aadhaarNumber) {
+    // Last-chance: Verhoeff Aadhaar — never force when OCR shows Udyam/MSME.
+    if (
+      local.extractedData?.aadhaarNumber &&
+      !hasStrongUdyamSignals(local.ocrText || "")
+    ) {
       return {
         documentType: "Aadhaar",
         confidence: Math.max(0.7, local.confidence),
@@ -1403,28 +1456,63 @@ export async function identifyDocumentTypeFromFile(
           ? `Gemini unavailable (${aiError}); classified via Aadhaar checksum`
           : "Classified via Aadhaar checksum",
         localEvidence: local.evidence,
+        identificationAccepted: true,
+        identificationUncertain: false,
+        validationStatus: "NEEDS_REVIEW",
       };
     }
   }
 
+  const confidence = wasCorrected
+    ? Math.max(fused.confidence, 0.85)
+    : fused.confidence;
+  const source = wasCorrected ? "ocr_title_correct" : fused.source;
+
+  // Banking gate: never silently accept a guessed type on low confidence.
+  const gate = resolveAcceptedDocumentType(
+    correctedType,
+    confidence,
+    local.ocrText || "",
+  );
+  const finalType = gate.accepted ? correctedType : "Other";
+  const validationStatus: DocumentValidationStatus = !gate.accepted
+    ? "NEEDS_REVIEW"
+    : gate.uncertain
+      ? "NEEDS_REVIEW"
+      : "VALID";
+
   const messageParts: string[] = [];
   if (aiError) messageParts.push(`Gemini: ${aiError}`);
-  messageParts.push(`source=${wasCorrected ? "ocr_title_correct" : fused.source}`);
+  messageParts.push(`source=${source}`);
   if (wasCorrected) {
     messageParts.push(`corrected_from=${fused.documentType}`);
+  }
+  if (!gate.accepted) {
+    messageParts.push(
+      gate.reason || "Identification refused — insufficient confidence",
+    );
+  } else if (gate.uncertain) {
+    messageParts.push(gate.reason || "Identification uncertain — manual review");
   }
   if (local.evidence.length) {
     messageParts.push(`local=${local.evidence.join(",")}`);
   }
+  if (local.evidence.includes("empty_ocr")) {
+    messageParts.push("empty_or_unreadable_ocr");
+  }
 
   return {
-    documentType: correctedType,
-    confidence: wasCorrected
-      ? Math.max(fused.confidence, 0.85)
-      : fused.confidence,
-    source: wasCorrected ? "ocr_title_correct" : fused.source,
+    documentType: finalType,
+    confidence,
+    source,
     message: messageParts.join(" | "),
     localEvidence: local.evidence,
+    identificationAccepted: gate.accepted,
+    identificationUncertain: gate.uncertain || !gate.accepted,
+    validationStatus:
+      local.evidence.includes("empty_ocr") && !gate.accepted
+        ? "PROCESSING_FAILED"
+        : validationStatus,
   };
 }
 
