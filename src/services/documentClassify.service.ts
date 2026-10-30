@@ -659,6 +659,15 @@ export function correctTypeFromFileName(
     return "Aadhaar";
   }
   if (/\bpan\b|pancard/.test(name)) return "PAN";
+  // "GST Certificate_Swarajya.pdf" etc. — helps when PDF text layer / Tesseract is empty on server
+  if (/\bgst\b|gstin|goods\s*and\s*services\s*tax/.test(name)) return "GST";
+  if (/salary\s*slip|payslip|pay\s*slip/.test(name)) return "Salary Slip";
+  if (/form\s*16|tds\s*certificate/.test(name)) return "Form 16";
+  if (/bank\s*statement/.test(name)) return "Bank Statement";
+  if (/\bitr\b|income\s*tax\s*return/.test(name)) return "ITR";
+  if (/trade\s*licen[cs]e/.test(name)) return "Trade License";
+  if (/passport/.test(name)) return "Passport";
+  if (/driving\s*licen[cs]e|\bdl\b/.test(name)) return "Driving License";
   return documentType;
 }
 
